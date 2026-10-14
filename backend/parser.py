@@ -242,6 +242,15 @@ def safe_ocr(image, width, number, project):
         project.warnings.append(f"第 {number} 页使用本地 OCR 与像素样式估计，已重建基础色块；字体、粗细和识别文字仍需校对，可在原页框选图片区。")
         if not elements:
             project.warnings.append(f"第 {number} 页未识别到文字，可手动新增文字框。")
+        weak = sum(e.type == 'text' and e.sourceRegion is not None and e.sourceRegion.confidence is not None and e.sourceRegion.confidence < .85 for e in elements)
+        if weak:
+            project.warnings.append(f"第 {number} 页仍有 {weak} 行 OCR 置信度低，请对照原页逐行校正；低置信度文字不会强行拉伸铺满识别框。")
+        fallback = sum(e.sourceRegion is not None and e.sourceRegion.detectedFrom == 'ocr-style-fallback' for e in elements)
+        if fallback:
+            project.warnings.append(f"第 {number} 页有 {fallback} 行样式估计未完成，已保留识别文字与位置，请手动校对字体和字号。")
+        approximate = sum(e.sourceRegion is not None and (e.sourceRegion.sourceFont or '').startswith('近似候选') for e in elements)
+        if approximate:
+            project.warnings.append(f"第 {number} 页有 {approximate} 行字体候选不明确，已使用近似系统字体；文字 OCR 置信度高不代表字体还原准确，请对照原页核对。")
         return shapes+elements
     except Exception:
         project.warnings.append(f"第 {number} 页 OCR 不可用或识别失败，请检查本地安装；仍可手动新增文字和图片区。")

@@ -33,7 +33,9 @@ def calibrate_text_widths(elements,page_width):
                     return False
                 for element,width,editor_width in zip(elements,widths,editor_widths):
                     width = max(width,editor_width)
-                    if width>0:
+                    if element.sourceRegion and element.sourceRegion.confidence is not None and element.sourceRegion.confidence < .85:
+                        element.style.fontScaleX = 1
+                    elif width>0:
                         element.style.fontScaleX = max(.4,min(2,(element.width-.3)*96/72/width))
                 return True
             finally:

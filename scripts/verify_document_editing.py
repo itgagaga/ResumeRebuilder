@@ -19,7 +19,7 @@ import pdfplumber
 def fixture():
     body = Style(fontSize=12, lineHeight=1.5)
     return Project(projectId="document_editing", name="段落编辑验收", pages=[Page(id="page", width=595, height=842, elements=[
-        Element(id="name", type="text", text="虚构用户", x=40, y=25, width=160, height=30, style=Style(fontSize=22)),
+        Element(id="name", type="text", text="虚构用户", x=40, y=25, width=160, height=30, style=Style(fontSize=22),sourceRegion={"detectedFrom":"ocr","page":1,"confidence":.6}),
         Element(id="line1", type="text", text="负责简历编辑产品的页面开发与维护，持续改善文字输入和排版体验，", x=40, y=80, width=440, height=20, style=body, textRuns=[{"start":2,"end":6,"fontWeight":700}]),
         Element(id="line2", type="text", text="支持将识别得到的连续正文整理为段落，方便统一修改和保存，", x=40, y=103, width=440, height=20, style=body, textRuns=[{"start":0,"end":2,"fontWeight":700}]),
         Element(id="line3", type="text", text="在本机完成全部编辑流程。", x=40, y=126, width=220, height=20, style=body),
@@ -73,6 +73,7 @@ def main():
         tab.get_by_role("button",name=original["name"]).click()
         content = tab.get_by_role("button",name="内容编辑",exact=True)
         expect(content).to_have_attribute("aria-pressed","true")
+        expect(tab.locator('[data-element-id="name"]')).to_have_class(__import__('re').compile('is-uncertain'))
         name = tab.locator('[data-element-id="name"] .inline-editor')
         name.click(position={"x":2,"y":10})
         # A click positions the caret where clicked; React never remounts the node.

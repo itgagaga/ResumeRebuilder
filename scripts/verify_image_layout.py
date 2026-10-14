@@ -11,8 +11,9 @@ sys.path.insert(0,str(ROOT))
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("image",type=Path)
+    parser.add_argument("--output",type=Path,default=ROOT/"artifacts"/"image-quality")
     args = parser.parse_args()
-    output = ROOT/"artifacts"/"image-quality"
+    output = args.output.resolve()
     output.mkdir(parents=True,exist_ok=True)
     os.environ["RESUME_DATA_DIR"] = str(output/"projects")
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(ROOT/"runtime"/"browsers")
@@ -31,6 +32,7 @@ def main():
     page = project.pages[0]
     html = render_html(project)
     (output/"restored.html").write_text(html,encoding="utf-8")
+    (output/"restored-editable.html").write_text(render_html(project,editable=True),encoding="utf-8")
     (output/"project.json").write_text(project.model_dump_json(indent=2),encoding="utf-8")
     with sync_playwright() as playwright:
         browser = launch_browser(playwright)
@@ -38,7 +40,7 @@ def main():
         tab.route("**/*",lambda route:route.abort())
         tab.set_content(html)
         scale = source.width/(page.width*96/72)
-        tab.add_style_tag(content=f"body{{zoom:{scale};background:white}}.page{{margin:0}}")
+        tab.add_style_tag(content=f"body{{background:white}}.page{{margin:0;transform:scale({scale});transform-origin:top left}}")
         tab.evaluate("async()=>await document.fonts.ready")
         tab.locator(".page").screenshot(path=output/"restored.png")
         overflowing = tab.locator(".page>div>span").evaluate_all("els=>els.filter(e=>e.scrollHeight>e.clientHeight+2||e.scrollWidth>e.clientWidth+2).length")
@@ -95,6 +97,9 @@ def main():
     side_by_side.paste(source,(0,0));side_by_side.paste(rendered,(source.width+20,0))
     side_by_side.save(output/"comparison.png")
     (output/"restored.pdf").write_bytes(render_pdf(project))
+    (output/"quality.json").write_text(json.dumps({'textLines':sum(e.type=='text' for e in page.elements),'shapes':sum(e.type=='rect' for e in page.elements),
+        'exportOverflow':overflowing,'editorOverflow':editor_overflow,'sourceAssets':len(project.assets),
+        'lowConfidenceLines':sum(e.type=='text' and e.sourceRegion is not None and e.sourceRegion.confidence is not None and e.sourceRegion.confidence<.85 for e in page.elements)},indent=2),encoding='utf-8')
     print(f"Rebuilt {sum(e.type=='text' for e in page.elements)} text lines, {sum(e.type=='rect' for e in page.elements)} shapes. Export/editor overflowing lines: {overflowing}/{editor_overflow}. Exported source image assets: {len(project.assets)}. React edit/save of local style ranges passed.")
     print(f"Private QA artifacts: {output}")
 

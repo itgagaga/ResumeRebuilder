@@ -12,10 +12,10 @@ from .storage import new_id
 
 
 FONT_CHOICES = [
-    ("Arial, Microsoft YaHei, sans-serif", "msyh.ttc", "msyhbd.ttc"),
-    ("SimHei, Arial, sans-serif", "simhei.ttf", "simhei.ttf"),
-    ("SimSun, Georgia, serif", "simsun.ttc", "simsun.ttc"),
-    ("DengXian, Arial, sans-serif", "Deng.ttf", "Dengb.ttf"),
+    ("Arial, Microsoft YaHei, sans-serif", "msyh.ttc", "msyhbd.ttc", "arial.ttf", "arialbd.ttf"),
+    ("Arial, SimHei, sans-serif", "simhei.ttf", "simhei.ttf", "arial.ttf", "arialbd.ttf"),
+    ("Times New Roman, SimSun, serif", "simsun.ttc", "simsun.ttc", "times.ttf", "timesbd.ttf"),
+    ("Arial, DengXian, sans-serif", "Deng.ttf", "Dengb.ttf", "arial.ttf", "arialbd.ttf"),
 ]
 
 
@@ -95,6 +95,17 @@ def recover_shapes(image, page_width, page_number):
             previous.width = shape.x+shape.width-previous.x
         else:
             merged.append(shape)
+    # Recover thin grayscale rules across antialiased/JPEG color buckets as geometry.
+    contrast = np.linalg.norm(rgb.astype(np.float32)-background,axis=2) > 25
+    horizontal = cv2.morphologyEx(contrast.astype(np.uint8),cv2.MORPH_OPEN,np.ones((1,max(20,round(w*.18))),np.uint8))
+    count,_,stats,_ = cv2.connectedComponentsWithStats(horizontal,8)
+    for x,y,width,height,area in stats[1:]:
+        if width < w*.2 or height > max(5,h*.006) or area/(width*height) < .65: continue
+        if any(abs(e.y-y*factor) < max(2,height)*factor and min(e.x+e.width,(x+width)*factor)-max(e.x,x*factor) > width*factor*.8 for e in merged): continue
+        patch = rgb[y:y+height,x:x+width]
+        pixels = patch[horizontal[y:y+height,x:x+width] > 0]
+        merged.append(Element(id=new_id('rule'),type='rect',x=float(x*factor),y=float(y*factor),width=float(width*factor),height=float(height*factor),zIndex=0,
+                              style=Style(background=hex_color(np.median(pixels,axis=0))),sourceRegion=SourceRegion(detectedFrom='pixel-horizontal-rule',page=page_number)))
     # An accent often obscures the first few pixels of a flat banner. Extend the banner
     # underneath that rule so the editable shapes retain a coherent section background.
     for band in merged:
@@ -107,7 +118,7 @@ def recover_shapes(image, page_width, page_number):
     return merged, hex_color(background)
 
 
-@lru_cache(maxsize=128)
+@lru_cache(maxsize=512)
 def load_font(filename, size):
     path = Path("C:/Windows/Fonts")/filename
     if not path.exists():
@@ -118,9 +129,14 @@ def load_font(filename, size):
     return ImageFont.truetype(str(path), size) if path.exists() else None
 
 
-def render_glyph(char, font_choice, bold, size=40):
+def font_file(char, choice, bold):
+    return choice[4 if bold else 3] if ord(char) < 128 and len(choice) > 3 else choice[2 if bold else 1]
+
+
+@lru_cache(maxsize=16384)
+def render_glyph(char, font_choice, bold, size=40, antialias=False):
     latin = ord(char) < 128
-    filename = ("arialbd.ttf" if bold else "arial.ttf") if latin else font_choice[2 if bold else 1]
+    filename = font_file(char,font_choice,bold)
     font = load_font(filename, size)
     if font is None:
         return None
@@ -130,7 +146,8 @@ def render_glyph(char, font_choice, bold, size=40):
     box = canvas.getbbox()
     if not box:
         return None
-    return np.asarray(canvas.crop(box)) > 90
+    pixels = np.asarray(canvas.crop(box))
+    return pixels.astype(np.float32)/255 if antialias else pixels > 90
 
 
 def similarity(source, glyph):
@@ -212,7 +229,7 @@ def string_mask(text,choice,size,bold):
     canvas = Image.new("L", (min(16000,max(16,int(measured+size*2))),size*4),255)
     draw,x = ImageDraw.Draw(canvas),size/2
     for char in text:
-        filename = ("arialbd.ttf" if bold else "arial.ttf") if ord(char)<128 else choice[2 if bold else 1]
+        filename = font_file(char,choice,bold)
         font = load_font(filename,size)
         if font is None:
             continue
@@ -272,7 +289,7 @@ def text_metrics(text, choice, size, weight, runs):
         if char == "\n":
             continue
         bold = next((run.fontWeight == 700 for run in runs if run.start <= index < run.end),weight == 700)
-        filename = ("arialbd.ttf" if bold else "arial.ttf") if ord(char) < 128 else choice[2 if bold else 1]
+        filename = font_file(char,choice,bold)
         font = load_font(filename,max(1,round(size*4)))
         if font is None:
             widths.append(size*(.52 if ord(char)<128 else 1))
@@ -284,13 +301,18 @@ def text_metrics(text, choice, size, weight, runs):
     return sum(widths), max(heights,default=size*.9)
 
 
-def recover_text(rgb, text, box, words, confidence, factor, page_number, font_choice=None):
+def recover_text(rgb, text, box, words, confidence, factor, page_number, font_choice=None, typography=None):
+    from .typography import match_typography, restore_spaces
+    text = restore_spaces(text,words)
+    choice,matched_size,matched_weight,pixel,match_info = typography or match_typography(rgb,text,box,words,font_choice)
+    informative = [info for info in match_info.values() if info['scores'] and info['samples'] >= 3]
+    ambiguous = not informative
+    for info in informative:
+        ordered = sorted(info['scores'],reverse=True)
+        if ordered[0] < .65 or len(ordered)>1 and ordered[0]-ordered[1] < .035: ambiguous = True
     h,w = rgb.shape[:2]
-    left,top = np.floor(np.min(box,axis=0)).astype(int)
-    right,bottom = np.ceil(np.max(box,axis=0)).astype(int)
-    left,top,right,bottom = max(0,left),max(0,top),min(w,right),min(h,bottom)
+    mask,bg,(left,top,right,bottom) = pixel
     crop = rgb[top:bottom,left:right]
-    mask,bg = ink_mask(crop)
     tight = tight_mask(mask)
     if tight is not None:
         _, (x0,y0,x1,y1) = tight
@@ -302,25 +324,23 @@ def recover_text(rgb, text, box, words, confidence, factor, page_number, font_ch
     else:
         ink_x,ink_y,ink_width,ink_height = left,top,max(1,right-left),max(1,bottom-top)
         foreground = "#222222"
-    evidence = char_evidence(rgb,text,words)
-    choice = font_choice or infer_font(evidence)
     _,probe_height = text_metrics(text,choice,40,400,[])
-    initial_size = max(5,min(500,ink_height*40/max(1,probe_height)))
-    weight = 700 if tight and weight_fraction(tight[0],text,choice,initial_size) > .6 else 400
+    initial_size = max(5,min(500,matched_size or ink_height*40/max(1,probe_height)))
+    weight = matched_weight if matched_size else 700 if tight and weight_fraction(tight[0],text,choice,initial_size) > .6 else 400
     runs = infer_runs(rgb,text,words,choice,initial_size,bg) if weight == 400 else []
     # Match actual glyph height, then fit the advance width of the recognised line into its source bounds.
     _, probe_height = text_metrics(text,choice,40,weight,runs)
-    size = max(5,min(500,ink_height*40/max(1,probe_height)))
+    size = initial_size if matched_size else max(5,min(500,ink_height*40/max(1,probe_height)))
     measured_width,_ = text_metrics(text,choice,size,weight,runs)
     width = ink_width+max(2,size*.08)
-    font_scale = float(np.clip((width-1)/max(1,measured_width),.4,2))
-    height = max(size*1.35,ink_height+size*.3)
+    font_scale = float(np.clip((width-1)/max(1,measured_width),.4,2)) if confidence >= .85 else 1
+    height = max(size*1.2,ink_height+size*.12)
     return Element(id=new_id("text"),type="text",text=text,textRuns=runs,
                    x=float(ink_x*factor),y=float((ink_y-size*.12)*factor),
                    width=float(width*factor),height=float(height*factor),zIndex=2,
                    style=Style(fontFamily=choice[0],fontSize=float(size*factor),fontScaleX=font_scale,
                                fontWeight=weight,color=foreground,lineHeight=1.15),
-                   sourceRegion=SourceRegion(detectedFrom="ocr",page=page_number,confidence=float(confidence),sourceFont="像素估计 / "+choice[0]))
+                   sourceRegion=SourceRegion(detectedFrom="ocr",page=page_number,confidence=float(confidence),sourceFont=("近似候选 / " if ambiguous else "像素匹配 / ")+choice[0]))
 
 
 def recover_bullet(rgb,element,box,factor,page_number):
@@ -332,7 +352,8 @@ def recover_bullet(rgb,element,box,factor,page_number):
     first = int(np.where(mask.any(axis=0))[0][0])
     count,_,stats,_ = cv2.connectedComponentsWithStats(mask.astype(np.uint8),8)
     for x,y,width,height,area in stats[1:]:
-        if x-first>2 or not 3<=width<=10 or not 3<=height<=10 or not .6<=width/height<=1.5 or area/(width*height)<.55:
+        minimum,maximum = max(2,mask.shape[0]*.07),max(4,mask.shape[0]*.45)
+        if x-first>2 or not minimum<=width<=maximum or not minimum<=height<=maximum or not .6<=width/height<=1.5 or area/(width*height)<.55:
             continue
         if not .25*mask.shape[0] <= y+height/2 <= .8*mask.shape[0]: continue
         following = np.where(mask[:,x+width:].any(axis=0))[0]
