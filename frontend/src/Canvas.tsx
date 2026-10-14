@@ -13,6 +13,7 @@ interface Props {
   setSelected: (id: string | null) => void; change: (p: Project, record?: boolean, original?: Project) => void;
   setTool: (t: Tool) => void; setOverflow: (ids: string[]) => void
   editRequest?: { id: string; nonce: number } | null; undo: () => void; redo: () => void
+  contentMode: boolean
 }
 
 export function ElementView({ element: e, projectId, editing = false }: { element: Element; projectId: string; editing?: boolean }) {
@@ -32,7 +33,7 @@ export function elementStyle(e: Element): React.CSSProperties {
     overflow: e.type === 'image_placeholder' ? 'hidden' : 'visible', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', boxSizing: 'border-box' }
 }
 
-export default function Canvas({ project, page, pageIndex, zoom, tool, selected, setSelected, change, setTool, setOverflow, editRequest, undo, redo }: Props) {
+export default function Canvas({ project, page, pageIndex, zoom, tool, selected, setSelected, change, setTool, setOverflow, editRequest, undo, redo, contentMode }: Props) {
   const root = useRef<HTMLDivElement>(null)
   const drag = useRef<Drag | null>(null)
   const [drawing, setDrawing] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
@@ -57,12 +58,32 @@ export default function Canvas({ project, page, pageIndex, zoom, tool, selected,
     document.fonts.ready.then(check)
     return () => clearTimeout(timer)
   }, [page, setOverflow])
-  useEffect(() => { setEditing(null) }, [page.id, selected])
-  useEffect(() => { if (editRequest && page.elements.some(e => e.id === editRequest.id && e.type === 'text')) setEditing(editRequest.id) }, [editRequest?.nonce])
+  useEffect(() => { setEditing(null) }, [page.id, contentMode, tool])
+  useEffect(() => { if (editing && selected !== editing) setEditing(null) }, [selected])
+  function focusText(id: string) {
+    const node = root.current?.querySelector<HTMLElement>(`[data-element-id="${id}"] .inline-editor`)
+    if (!node) return false
+    node.focus()
+    const range = document.createRange(); range.selectNodeContents(node); range.collapse(false)
+    const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
+    return true
+  }
+  function navigateText(id: string, backward: boolean) {
+    const ordered = page.elements.filter(e => e.type === 'text').sort((a,b) => a.y-b.y || a.x-b.x)
+    const target = ordered[ordered.findIndex(e => e.id === id)+(backward ? -1 : 1)]
+    return !!target && focusText(target.id)
+  }
+  useEffect(() => {
+    if (!editRequest || !page.elements.some(e => e.id === editRequest.id && e.type === 'text')) return
+    if (contentMode) focusText(editRequest.id)
+    else setEditing(editRequest.id)
+  }, [editRequest?.nonce])
 
   function start(event: React.PointerEvent, element?: Element, handle?: string) {
-    if (event.button !== 0 || editing) return
+    if (event.button !== 0) return
     event.stopPropagation()
+    if (contentMode && tool === 'select' && !handle) { setSelected(element?.id || null); return }
+    if (editing) return
     if (tool !== 'select' && !handle) {
       drag.current = { start: point(event), kind: 'draw', original: structuredClone(project) }
       setSelected(null)
@@ -102,12 +123,12 @@ export default function Canvas({ project, page, pageIndex, zoom, tool, selected,
   }
   const active = page.elements.find(e => e.id === selected)
   return <div className="paper-wrap" style={{ width: page.width*scale, height: page.height*scale }}>
-    <div ref={root} className={`paper tool-${tool}`} style={{ width: page.width, height: page.height, background: page.background, transform: `scale(${scale})` }} onDoubleClick={() => { if (active?.type === 'text' && tool === 'select') setEditing(active.id) }} onPointerDown={e => start(e)} onPointerMove={move} onPointerUp={end} onPointerCancel={e => { if (drag.current) change(drag.current.original, false); drag.current = null; setDrawing(null); if (root.current?.hasPointerCapture(e.pointerId)) root.current.releasePointerCapture(e.pointerId) }}>
+    <div ref={root} className={`paper tool-${tool} ${contentMode ? 'content-mode' : 'layout-mode'}`} style={{ width: page.width, height: page.height, background: page.background, transform: `scale(${scale})` }} onDoubleClick={() => { if (!contentMode && active?.type === 'text' && tool === 'select') setEditing(active.id) }} onPointerDown={e => start(e)} onPointerMove={move} onPointerUp={end} onPointerCancel={e => { if (drag.current) change(drag.current.original, false); drag.current = null; setDrawing(null); if (root.current?.hasPointerCapture(e.pointerId)) root.current.releasePointerCapture(e.pointerId) }}>
       {page.elements.map(e => <div key={e.id} data-element-id={e.id} className={`element ${selected === e.id ? 'is-selected' : ''} ${overflowIds.includes(e.id) ? 'is-overflow' : ''}`}
         style={elementStyle(e)} onPointerDown={event => start(event, e)} onDoubleClick={event => { if (e.type === 'text') { event.stopPropagation(); setSelected(e.id); setEditing(e.id) } }}>
-        {editing === e.id ? <InlineTextEditor element={e} onChange={updateElement} onFinish={() => setEditing(null)} undo={undo} redo={redo}/> : <ElementView element={e} projectId={project.projectId} editing />}
+        {e.type === 'text' && (contentMode || editing === e.id) ? <InlineTextEditor element={e} onChange={updateElement} onFinish={() => setEditing(current => current === e.id ? null : current)} onActivate={() => { setSelected(e.id); setEditing(e.id) }} active={editing === e.id} autoFocus={!contentMode} enabled={tool === 'select'} onNavigate={contentMode ? backward => navigateText(e.id,backward) : undefined} undo={undo} redo={redo}/> : <ElementView element={e} projectId={project.projectId} editing />}
       </div>)}
-      {active && !editing && <div className="selection-box" style={{ position: 'absolute', left: active.x, top: active.y, width: active.width, height: active.height, transform: `rotate(${active.rotation}deg)`, transformOrigin: active.type === 'line' ? 'left top' : 'center', zIndex: 10001 }}>
+      {active && !editing && !contentMode && <div className="selection-box" style={{ position: 'absolute', left: active.x, top: active.y, width: active.width, height: active.height, transform: `rotate(${active.rotation}deg)`, transformOrigin: active.type === 'line' ? 'left top' : 'center', zIndex: 10001 }}>
         <span className="size-label">{Math.round(active.width)} × {Math.round(active.height)}</span>
         {['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map(handle => <button key={handle} className={`handle ${handle}`} aria-label={`调整尺寸 ${handle}`} onPointerDown={event => start(event, active, handle)} />)}
       </div>}

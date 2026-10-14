@@ -52,6 +52,8 @@ def main():
         tab.goto("http://127.0.0.1:8765/")
         tab.get_by_role("button",name=project.name).click()
         expect(tab.get_by_label("工程名称")).to_be_visible()
+        # Retain regression coverage for the original double-click layout workflow.
+        tab.get_by_role("button",name="版式调整",exact=True).click()
         target = tab.locator(f'[data-element-id="{selected.id}"]')
         target.dblclick()
         editor = tab.get_by_role("textbox",name="直接编辑文字")

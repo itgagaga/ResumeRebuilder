@@ -68,7 +68,7 @@ class Element(Model):
     zIndex: int = Field(default=1, ge=-10000, le=10000)
     text: str = Field(default="", max_length=100000)
     textRuns: list[TextRun] = Field(default_factory=list,max_length=2000)
-    textLayout: Literal["auto", "wrap", "fixed"] = "auto"
+    textLayout: Literal["auto", "wrap", "fixed", "paragraph"] = "auto"
     flowBelow: bool = True
     style: Style = Field(default_factory=Style)
     shape: Literal["rect", "circle", "rounded"] = "rect"

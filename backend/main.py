@@ -216,12 +216,13 @@ def export_project(project_id: str, options: ExportRequest):
     if options.format != "project" and empty and not options.confirmEmpty:
         raise AppError(f"还有 {empty} 个图片区未替换，确认后将导出空白区域", 409)
     if options.format == "html":
-        data, media, extension = render_html(project).encode("utf-8"), "text/html", "html"
+        data, media, extension = render_html(project, editable=True).encode("utf-8"), "text/html", "html"
     elif options.format == "pdf":
         data, media, extension = render_pdf(project), "application/pdf", "pdf"
     else:
         data, media, extension = pack_project(project, options.includeReference), "application/zip", "rresume"
-    return Response(data, media_type=media, headers={"Content-Disposition": f'attachment; filename="resume.{extension}"'})
+    filename = "resume-editable.html" if options.format == "html" else f"resume.{extension}"
+    return Response(data, media_type=media, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 dist = ROOT / "frontend" / "dist"

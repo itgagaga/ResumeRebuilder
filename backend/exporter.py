@@ -3,7 +3,6 @@ import html
 import os
 
 from .config import ROOT, RUNTIME, AppError
-from .coordinates import pt_to_css
 from .storage import asset_path
 from .browser import launch_browser
 
@@ -18,7 +17,7 @@ def text_html(element):
     return ''.join(parts)
 
 
-def render_html(project):
+def render_html(project, *, editable=False):
     pages = []
     css_pages = []
     for index, page in enumerate(project.pages):
@@ -38,14 +37,22 @@ def render_html(project):
                 f"border-radius:{radius};"
             )
             content = ""
+            attributes = ""
+            if editable:
+                attributes = (f' data-resume-element="{element.id}" data-kind="{element.type}"'
+                              f' data-layout="{element.textLayout}" data-flow="{str(element.flowBelow).lower()}"'
+                              f' data-scale="{style.fontScaleX}"')
             if element.type == "text":
                 properties += (
                     f"font-family:{style.fontFamily};font-size:{style.fontSize*factor}px;"
                     f"font-weight:{style.fontWeight};font-style:{style.fontStyle};color:{style.color};"
                     f"line-height:{style.lineHeight};text-align:{style.textAlign};white-space:pre-wrap;overflow-wrap:break-word;"
                 )
-                content = (f'<span style="display:block;width:{100/style.fontScaleX}%;height:100%;transform:scaleX({style.fontScaleX});transform-origin:left top;">'
-                           + text_html(element) + '</span>')
+                tag = "div" if editable else "span"
+                editor_attributes = ' data-resume-text contenteditable="true" spellcheck="false" role="textbox" aria-label="编辑简历文字" aria-multiline="true"' if editable else ""
+                height = "auto;min-height:100%" if editable else "100%"
+                content = (f'<{tag}{editor_attributes} style="display:block;width:{100/style.fontScaleX}%;height:{height};transform:scaleX({style.fontScaleX});transform-origin:left top;">'
+                           + text_html(element) + f'</{tag}>')
             elif element.type == "image_placeholder":
                 properties += "overflow:hidden;"
                 if element.assetId:
@@ -54,12 +61,36 @@ def render_html(project):
                     content = (f'<img alt="" src="data:image/png;base64,{encoded}" style="width:100%;height:100%;display:block;'
                                f'object-fit:{element.fit};object-position:{50+crop.offsetX/2}% {50+crop.offsetY/2}%;'
                                f'transform:translate({crop.offsetX/2}%,{crop.offsetY/2}%) scale({crop.scale});"/>')
-            objects.append(f'<div style="{html.escape(properties, quote=True)}">{content}</div>')
-        pages.append(f'<section class="page" style="page:p{index};width:{page.width*factor}px;height:{page.height*factor}px;background:{page.background}">{"".join(objects)}</section>')
+            objects.append(f'<div{attributes} style="{html.escape(properties, quote=True)}">{content}</div>')
+        page_content = "".join(objects)
+        page_attributes = ""
+        if editable:
+            page_attributes = f' data-base-width="{page.width*factor}" data-base-height="{page.height*factor}"'
+            page_content = f'<div class="resume-content" style="position:relative;width:100%;height:100%">{page_content}</div>'
+            css_pages.append(f'@media print{{.page:nth-of-type({index+1}){{width:{page.width*factor}px!important;height:{page.height*factor}px!important}}}}')
+        pages.append(f'<section class="page"{page_attributes} style="page:p{index};width:{page.width*factor}px;height:{page.height*factor}px;background:{page.background}">{page_content}</section>')
+    editor_css = editor_ui = editor_script = editor_policy = ""
+    if editable:
+        editor_policy = ('<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; '
+                         'img-src data: blob:; style-src &#39;unsafe-inline&#39;; script-src &#39;unsafe-inline&#39;; '
+                         'base-uri &#39;none&#39;; form-action &#39;none&#39;">')
+        editor_css = (ROOT / "backend" / "standalone_editor.css").read_text(encoding="utf-8")
+        editor_script = '<script>' + (ROOT / "backend" / "standalone_editor.js").read_text(encoding="utf-8") + '</script>'
+        editor_ui = ('<nav class="resume-toolbar" aria-label="简历编辑工具" data-editor-ui>'
+                     '<button type="button" id="resume-save">保存修改后的 HTML</button>'
+                     '<button type="button" id="resume-bold" aria-pressed="false" title="选中文字后点击，也可按 Ctrl+B"><b>B</b> 加粗 / 取消加粗</button>'
+                     '<button type="button" id="resume-photo">更换图片</button>'
+                     '<button type="button" id="resume-print">打印 / 导出 PDF</button>'
+                     '<label>文字排版 <select id="resume-layout" aria-label="文字排版" disabled>'
+                     '<option value="auto">先扩宽，再换行</option><option value="paragraph">固定宽度，自动增减高度</option>'
+                     '<option value="wrap">固定宽度，只增高</option><option value="fixed">固定尺寸</option></select></label>'
+                     '<input id="resume-photo-file" type="file" accept="image/png,image/jpeg,image/webp" hidden></nav>'
+                     '<p class="resume-hint" id="resume-hint" role="status" data-editor-ui>点击文字即可修改；点击图片可更换。保存会下载包含修改的新 HTML 文件，无需启动本地服务。</p>'
+                     '<noscript data-editor-ui>请在浏览器中启用 JavaScript，才能保存修改和更换图片。</noscript>')
     return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>' + '简历'
-            + '</title><style>*{box-sizing:border-box}body{margin:0;background:#e7e9ec}.page{position:relative;margin:20px auto;overflow:hidden}'
-            + ''.join(css_pages) + '@media print{body{background:white}.page{margin:0;break-after:page}.page:last-child{break-after:auto}}</style></head><body>'
-            + ''.join(pages) + '</body></html>')
+            + '</title><meta name="viewport" content="width=device-width,initial-scale=1">' + editor_policy + '<style>*{box-sizing:border-box}body{margin:0;background:#e7e9ec}.page{position:relative;margin:20px auto;overflow:hidden}'
+            + ''.join(css_pages) + '@media print{body{background:white}.page{margin:0;break-after:page}.page:last-of-type{break-after:auto}}'
+            + editor_css + '</style></head><body>' + editor_ui + ''.join(pages) + editor_script + '</body></html>')
 
 
 def render_pdf(project):

@@ -77,6 +77,40 @@ def test_export_escapes_html():
     with pytest.raises(ValidationError): Style(background="url(file:///etc/passwd)")
 
 
+def test_html_download_is_an_independent_editor_but_pdf_markup_is_clean(client):
+    project = Project(projectId="standalone",name="不应进入成品的旧姓名",pages=[Page(id="p",width=595,height=842,elements=[
+        Element(id="t",type="text",x=30,y=30,width=400,height=20,text='<script>alert("x")</script>'),
+    ])])
+    save_project(project)
+    response = client.post('/api/projects/standalone/export',json={"format":"html"})
+    assert response.status_code == 200 and 'resume-editable.html' in response.headers['content-disposition']
+    assert 'contenteditable="true"' in response.text and '保存修改后的 HTML' in response.text
+    assert 'data-resume-text' in response.text and 'document.documentElement.cloneNode(true)' in response.text
+    assert '&lt;script&gt;' in response.text and '<script>alert(' not in response.text
+    assert '不应进入成品的旧姓名' not in response.text
+    assert 'fetch(' not in response.text and 'src="http' not in response.text and '/api/' not in response.text
+    static = render_html(project)
+    assert 'contenteditable' not in static and '<script>' not in static and 'resume-toolbar' not in static
+
+
+def test_paragraph_mode_api_package_and_legacy_defaults(client):
+    project = Project(projectId="paragraph", name="段落工程", pages=[Page(id="p", width=595, height=842, elements=[
+        Element(id="t", type="text", x=40, y=50, width=420, height=38, text="新的正文\n第二段内容", textLayout="paragraph", textRuns=[{"start":0,"end":2,"fontWeight":700}]),
+    ])])
+    save_project(project)
+    response = client.put("/api/projects/paragraph", json=project.model_dump())
+    assert response.status_code == 200
+    restored = unpack_project(pack_project(load_project(project.projectId), include_reference=False))
+    paragraph = restored.pages[0].elements[0]
+    assert paragraph.textLayout == "paragraph" and paragraph.text == project.pages[0].elements[0].text
+    assert paragraph.textRuns == project.pages[0].elements[0].textRuns
+    assert "新的" in render_html(restored) and "正文" in render_html(restored)
+    legacy = project.model_dump()
+    del legacy["pages"][0]["elements"][0]["textLayout"]
+    del legacy["pages"][0]["elements"][0]["flowBelow"]
+    assert Project.model_validate(legacy).pages[0].elements[0].textLayout == "auto"
+
+
 @pytest.mark.parametrize("name", ["../escape.png", "/escape.png", "assets/../../escape.png", "C:/escape.png", "assets\\escape.png"])
 def test_archive_path_traversal_rejected(name):
     data = io.BytesIO()

@@ -81,29 +81,46 @@ export function availableTextWidth(element: Element, page: Page) {
 export function layoutText(page: Page, updated: Element): Page {
   const previous = page.elements.find(e => e.id === updated.id)
   let element = { ...updated }, delta = 0
-  if (element.type === 'text' && element.textLayout !== 'fixed' && element.text && Math.abs(element.rotation) < .1) {
+  if (element.type === 'text' && element.textLayout !== 'fixed' && (element.text || element.textLayout === 'paragraph') && Math.abs(element.rotation) < .1) {
     const measure = document.createElement('div')
     Object.assign(measure.style,{ position: 'fixed', left: '-20000px', top: '0', visibility: 'hidden',
       fontFamily: element.style.fontFamily, fontSize: `${element.style.fontSize}px`, fontWeight: String(element.style.fontWeight),
       fontStyle: element.style.fontStyle, lineHeight: String(element.style.lineHeight), whiteSpace: 'pre',
       overflowWrap: 'break-word', width: 'max-content', padding: '0', margin: '0', border: '0' })
-    measure.append(textNodes(element)); document.body.append(measure)
+    measure.append(textNodes(element))
+    // An empty paragraph and a trailing newline still need a visible caret line.
+    if (!element.text || element.text.endsWith('\n')) measure.append(document.createTextNode('\u200b'))
+    document.body.append(measure)
     const horizontalBorder = element.style.borderWidth*2
-    if (element.textLayout !== 'wrap') {
+    if (element.textLayout !== 'wrap' && element.textLayout !== 'paragraph') {
       const desired = measure.getBoundingClientRect().width*element.style.fontScaleX+horizontalBorder+2
       // A rotated or already over-page object remains a manual correction, rather than silently clipped.
       element.width = Math.min(10000,Math.max(Math.min(element.width,availableTextWidth(element,page)),Math.min(desired,availableTextWidth(element,page))))
     }
     measure.style.whiteSpace = 'pre-wrap'
     measure.style.width = `${Math.max(1,(element.width-horizontalBorder)/element.style.fontScaleX)}px`
-    element.height = Math.min(10000,Math.max(element.height,measure.getBoundingClientRect().height+horizontalBorder+2))
+    const measured = measure.getBoundingClientRect().height+horizontalBorder+2
+    element.height = Math.min(10000,element.textLayout === 'paragraph' ? Math.max(element.style.fontSize*element.style.lineHeight+horizontalBorder+2,measured) : Math.max(element.height,measured))
     measure.remove()
     delta = element.height-(previous?.height || element.height)
   }
-  const left = Math.max(0,element.x-element.style.fontSize*2), right = element.x+element.width
+  // Propagate through full-width headings so their following rows move with them.
+  // Use the old geometry for both growing and shrinking to preserve existing gaps.
+  const moving = new Set<string>()
+  if (previous && Math.abs(delta) > .1 && element.flowBelow !== false) {
+    const queue = [previous]
+    for (let i = 0; i < queue.length; i++) {
+      const anchor = queue[i], left = Math.max(0,anchor.x-anchor.style.fontSize*2), right = anchor.x+Math.max(anchor.width,i === 0 ? element.width : 0)
+      for (const other of page.elements) {
+        if (other.id !== element.id && !moving.has(other.id) && other.y >= anchor.y+anchor.height-.5 && other.x < right && other.x+other.width > left) {
+          moving.add(other.id); queue.push(other)
+        }
+      }
+    }
+  }
   return { ...page, elements: page.elements.map(other => {
     if (other.id === element.id) return element
-    if (previous && delta > .1 && element.flowBelow !== false && other.y >= previous.y+previous.height-.5 && other.x < right && other.x+other.width > left) return { ...other, y: Math.min(10000,other.y+delta) }
+    if (moving.has(other.id)) return { ...other, y: Math.max(-10000,Math.min(10000,other.y+delta)) }
     return other
   }) }
 }

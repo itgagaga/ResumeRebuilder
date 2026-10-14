@@ -27,6 +27,7 @@ def main():
         page.screenshot(path=output/"welcome.png",full_page=True)
         page.get_by_role("button",name="体验示例").click()
         expect(page.get_by_label("工程名称")).to_be_visible(timeout=60000)
+        page.get_by_role("button",name="版式调整",exact=True).click()
         expect(page.locator('[data-text-id]').filter(has_text="张三")).to_have_count(1)
         expect(page.locator(".photo-empty")).to_have_count(1)
         name = page.locator('[data-text-id]').filter(has_text="张三")
