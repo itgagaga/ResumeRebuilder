@@ -86,7 +86,7 @@ def main():
             editor.get_by_role("button",name="保存",exact=True).click()
             expect(editor.locator(".save-state")).to_contain_text("已保存")
             updated = next(e for e in saved[-1]["pages"][0]["elements"] if e["id"] == rich.id)
-            assert updated["text"] == "测试替换文字" and updated["textRuns"] == []
+            assert updated["text"] == "测试替换文字" and all(0 <= r["start"] < r["end"] <= len(updated["text"]) for r in updated["textRuns"])
         assert not errors,errors
         assert overflowing == 0 and editor_overflow == 0,(overflowing,editor_overflow)
         browser.close()

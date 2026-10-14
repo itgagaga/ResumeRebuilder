@@ -3,6 +3,8 @@ import { ImagePlus } from 'lucide-react'
 import { assetUrl } from './api'
 import { createElement, type Element, type Page, type Project, type Tool } from './types'
 import TextContent from './TextContent'
+import InlineTextEditor from './InlineTextEditor'
+import { layoutText } from './textEditing'
 
 type Point = { x: number; y: number }
 type Drag = { start: Point; kind: 'move' | 'resize' | 'draw'; element?: Element; handle?: string; original: Project }
@@ -10,6 +12,7 @@ interface Props {
   project: Project; page: Page; pageIndex: number; zoom: number; tool: Tool; selected: string | null;
   setSelected: (id: string | null) => void; change: (p: Project, record?: boolean, original?: Project) => void;
   setTool: (t: Tool) => void; setOverflow: (ids: string[]) => void
+  editRequest?: { id: string; nonce: number } | null; undo: () => void; redo: () => void
 }
 
 export function ElementView({ element: e, projectId, editing = false }: { element: Element; projectId: string; editing?: boolean }) {
@@ -29,7 +32,7 @@ export function elementStyle(e: Element): React.CSSProperties {
     overflow: e.type === 'image_placeholder' ? 'hidden' : 'visible', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', boxSizing: 'border-box' }
 }
 
-export default function Canvas({ project, page, pageIndex, zoom, tool, selected, setSelected, change, setTool, setOverflow }: Props) {
+export default function Canvas({ project, page, pageIndex, zoom, tool, selected, setSelected, change, setTool, setOverflow, editRequest, undo, redo }: Props) {
   const root = useRef<HTMLDivElement>(null)
   const drag = useRef<Drag | null>(null)
   const [drawing, setDrawing] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
@@ -38,9 +41,10 @@ export default function Canvas({ project, page, pageIndex, zoom, tool, selected,
   const scale = zoom * (page.unit === 'pt' ? 96/72 : 1)
   const point = (event: React.PointerEvent): Point => { const rect = root.current!.getBoundingClientRect(); return { x: (event.clientX-rect.left)/scale, y: (event.clientY-rect.top)/scale } }
   const updateElement = (updated: Element, record = true, original?: Project) => {
-    if (page.elements.find(e => e.id === updated.id)?.text !== updated.text) updated = { ...updated, textRuns: [] }
+    const previous = page.elements.find(e => e.id === updated.id)
     const result = structuredClone(project)
-    result.pages[pageIndex].elements = result.pages[pageIndex].elements.map(e => e.id === updated.id ? updated : e)
+    if (updated.type === 'text' && (previous?.text !== updated.text || JSON.stringify(previous?.textRuns) !== JSON.stringify(updated.textRuns))) result.pages[pageIndex] = layoutText(result.pages[pageIndex],updated)
+    else result.pages[pageIndex].elements = result.pages[pageIndex].elements.map(e => e.id === updated.id ? updated : e)
     change(result, record, original)
   }
   useEffect(() => {
@@ -54,6 +58,7 @@ export default function Canvas({ project, page, pageIndex, zoom, tool, selected,
     return () => clearTimeout(timer)
   }, [page, setOverflow])
   useEffect(() => { setEditing(null) }, [page.id, selected])
+  useEffect(() => { if (editRequest && page.elements.some(e => e.id === editRequest.id && e.type === 'text')) setEditing(editRequest.id) }, [editRequest?.nonce])
 
   function start(event: React.PointerEvent, element?: Element, handle?: string) {
     if (event.button !== 0 || editing) return
@@ -75,6 +80,7 @@ export default function Canvas({ project, page, pageIndex, zoom, tool, selected,
     const e = { ...d.element! }
     if (d.kind === 'move') { e.x = Math.round((e.x+dx)*10)/10; e.y = Math.round((e.y+dy)*10)/10 }
     else {
+      if (e.type === 'text') e.textLayout = 'wrap'
       if (d.handle!.includes('e')) e.width = Math.max(4, e.width+dx)
       if (d.handle!.includes('s')) e.height = Math.max(1, e.height+dy)
       if (d.handle!.includes('w')) { e.width = Math.max(4, e.width-dx); e.x += d.element!.width-e.width }
@@ -99,13 +105,14 @@ export default function Canvas({ project, page, pageIndex, zoom, tool, selected,
     <div ref={root} className={`paper tool-${tool}`} style={{ width: page.width, height: page.height, background: page.background, transform: `scale(${scale})` }} onDoubleClick={() => { if (active?.type === 'text' && tool === 'select') setEditing(active.id) }} onPointerDown={e => start(e)} onPointerMove={move} onPointerUp={end} onPointerCancel={e => { if (drag.current) change(drag.current.original, false); drag.current = null; setDrawing(null); if (root.current?.hasPointerCapture(e.pointerId)) root.current.releasePointerCapture(e.pointerId) }}>
       {page.elements.map(e => <div key={e.id} data-element-id={e.id} className={`element ${selected === e.id ? 'is-selected' : ''} ${overflowIds.includes(e.id) ? 'is-overflow' : ''}`}
         style={elementStyle(e)} onPointerDown={event => start(event, e)} onDoubleClick={event => { if (e.type === 'text') { event.stopPropagation(); setSelected(e.id); setEditing(e.id) } }}>
-        {editing === e.id ? <textarea aria-label="直接编辑文字" className="inline-editor" autoFocus value={e.text} style={{ font: 'inherit', color: 'inherit', lineHeight: 'inherit', textAlign: 'inherit', width: `${100/e.style.fontScaleX}%`, transform: `scaleX(${e.style.fontScaleX})`, transformOrigin: 'left top' }} onPointerDown={event => event.stopPropagation()} onChange={event => updateElement({ ...e, text: event.target.value })} onBlur={() => setEditing(null)} onKeyDown={event => { if (event.key === 'Escape') setEditing(null); event.stopPropagation() }} /> : <ElementView element={e} projectId={project.projectId} editing />}
+        {editing === e.id ? <InlineTextEditor element={e} onChange={updateElement} onFinish={() => setEditing(null)} undo={undo} redo={redo}/> : <ElementView element={e} projectId={project.projectId} editing />}
       </div>)}
       {active && !editing && <div className="selection-box" style={{ position: 'absolute', left: active.x, top: active.y, width: active.width, height: active.height, transform: `rotate(${active.rotation}deg)`, transformOrigin: active.type === 'line' ? 'left top' : 'center', zIndex: 10001 }}>
         <span className="size-label">{Math.round(active.width)} × {Math.round(active.height)}</span>
         {['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map(handle => <button key={handle} className={`handle ${handle}`} aria-label={`调整尺寸 ${handle}`} onPointerDown={event => start(event, active, handle)} />)}
       </div>}
       {drawing && <div className="draw-region" style={{ ...drawing, position: 'absolute', zIndex: 10002 }} />}
+      {active && editing === active.id && <div className="editing-caption" style={{ left: active.x, top: Math.max(0,active.y-19) }}>直接输入 · 点击空白处完成</div>}
     </div>
   </div>
 }

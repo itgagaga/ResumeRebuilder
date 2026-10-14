@@ -5,8 +5,8 @@ function NumberField({ label, value, onChange, min = -10000, max = 10000, step =
   return <label className="number-field"><span>{label}</span><input type="number" value={Number(value.toFixed(2))} step={step} min={min} max={max} onChange={event => { if (event.target.value !== '' && Number.isFinite(event.target.valueAsNumber)) onChange(Math.min(max, Math.max(min, event.target.valueAsNumber))) }} /></label>
 }
 
-interface Props { element?: Element; page: Page; patch: (e: Element) => void; remove: () => void; duplicate: () => void; replaceImage: () => void; overflow: boolean; select: (id: string) => void }
-export default function Inspector({ element: e, page, patch, remove, duplicate, replaceImage, overflow, select }: Props) {
+interface Props { element?: Element; page: Page; patch: (e: Element) => void; remove: () => void; duplicate: () => void; replaceImage: () => void; editText: () => void; overflow: boolean; select: (id: string) => void }
+export default function Inspector({ element: e, page, patch, remove, duplicate, replaceImage, editText, overflow, select }: Props) {
   const style = (values: Partial<Element['style']>) => e && patch({ ...e, textRuns: values.fontWeight !== undefined ? [] : e.textRuns, style: { ...e.style, ...values } })
   return <aside className="inspector">
     <div className="panel-title"><span>属性</span><span className="micro-label">PROPERTIES</span></div>
@@ -16,12 +16,14 @@ export default function Inspector({ element: e, page, patch, remove, duplicate, 
         <NumberField label="旋转 °" value={e.rotation} min={-360} max={360} onChange={rotation => patch({ ...e, rotation })}/>
         <div className="layer-buttons"><button onClick={() => patch({ ...e, zIndex: Math.max(...page.elements.map(e => e.zIndex))+1 })}><ArrowUp size={14}/>置顶</button><button onClick={() => patch({ ...e, zIndex: Math.min(...page.elements.map(e => e.zIndex))-1 })}><ArrowDown size={14}/>置底</button></div>
       </section>
-      {e.type === 'text' && <section className="inspector-section"><h3>文字内容</h3><textarea aria-label="文字内容" className="content-input" value={e.text} onChange={event => patch({ ...e, text: event.target.value })} placeholder="清空文字可保留版式" />
+      {e.type === 'text' && <section className="inspector-section"><h3>文字内容</h3><button className="button secondary" onClick={editText}>在页面中编辑</button><p className="hint">双击页面中的文字即可放置光标、直接输入。下方输入框用于辅助校对。</p><textarea aria-label="文字内容" className="content-input" value={e.text} onChange={event => patch({ ...e, text: event.target.value })} placeholder="清空文字可保留版式" />
+        <label className="field-label">内容增长<select aria-label="内容增长" value={e.textLayout || 'auto'} onChange={event => patch({ ...e, textLayout: event.target.value as Element['textLayout'] })}><option value="auto">自动扩展宽度 / 换行增高</option><option value="wrap">固定宽度 / 换行增高</option><option value="fixed">固定尺寸 / 手动调整</option></select></label>
+        <label className="check-field"><input type="checkbox" checked={e.flowBelow !== false} onChange={event => patch({ ...e, flowBelow: event.target.checked })}/>增高时推开下方内容</label>
         <label className="field-label">字体<select value={e.style.fontFamily} onChange={event => style({ fontFamily: event.target.value })}><option value="Arial, Microsoft YaHei, sans-serif">微软雅黑 / Arial</option><option value="SimSun, Georgia, serif">宋体 / SimSun</option><option value="Georgia, SimSun, serif">Georgia / 衬线体</option><option value="Consolas, monospace">等宽字体 / Consolas</option>{!['Arial, Microsoft YaHei, sans-serif', 'SimSun, Georgia, serif', 'Georgia, SimSun, serif', 'Consolas, monospace'].includes(e.style.fontFamily) && <option value={e.style.fontFamily}>{e.style.fontFamily}</option>}</select></label>
         <div className="field-grid"><NumberField label="字号" value={e.style.fontSize} min={1} max={500} onChange={fontSize => style({ fontSize })}/><NumberField label="行高" value={e.style.lineHeight} min={0.5} max={5} step={0.05} onChange={lineHeight => style({ lineHeight })}/></div>
         <NumberField label="字宽" value={e.style.fontScaleX} min={0.4} max={2} step={0.05} onChange={fontScaleX => style({ fontScaleX })}/>
         {e.sourceRegion?.sourceFont && <p className="hint">字体线索：{e.sourceRegion.sourceFont}。字宽按原行边界校准，字体和粗细可手动调整。</p>}
-        {!!e.textRuns?.length && <p className="hint">已恢复行内局部粗体。修改文字内容或字重后将重新使用整框样式。</p>}
+        {!!e.textRuns?.length && <p className="hint">页面内编辑保留局部粗体；选择整框字重可统一重设。</p>}
         <div className="field-grid"><label className="field-label">字重<select value={e.style.fontWeight} onChange={event => style({ fontWeight: +event.target.value })}><option value={400}>常规</option><option value={500}>中等</option><option value={700}>粗体</option>{![400, 500, 700].includes(e.style.fontWeight) && <option value={e.style.fontWeight}>{e.style.fontWeight}</option>}</select></label><label className="field-label">对齐<select value={e.style.textAlign} onChange={event => style({ textAlign: event.target.value as Element['style']['textAlign'] })}><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option><option value="justify">两端对齐</option></select></label></div>
         <div className="color-field"><label>文字颜色</label><input type="color" value={e.style.color} onChange={event => style({ color: event.target.value })}/><span>{e.style.color}</span></div>
         <label className="check-field"><input type="checkbox" checked={e.style.fontStyle === 'italic'} onChange={event => style({ fontStyle: event.target.checked ? 'italic' : 'normal' })}/>斜体</label>

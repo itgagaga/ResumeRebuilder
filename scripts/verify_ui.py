@@ -85,6 +85,7 @@ def main():
         assert page.locator('[data-text-id]').count() == before
         # Long input is visibly diagnosed rather than silently lost.
         page.locator('[data-text-id]').filter(has_text="李四").click()
+        page.get_by_role("combobox",name="内容增长").select_option("fixed")
         page.get_by_label("文字内容").fill("这是一段用于测试文字溢出的长内容"*8)
         expect(page.get_by_text("文字超出边界，请扩大文本框或缩小字号。")).to_be_visible(timeout=10000)
         # Exercise pagination.
