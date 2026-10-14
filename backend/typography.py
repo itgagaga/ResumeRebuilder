@@ -45,18 +45,18 @@ def indexed_words(text, words):
 
 def _samples(text,words,latin):
     samples = [(i,ch,q) for i,ch,score,q in indexed_words(text,words) if score >= .9 and
-               ((ch.isascii() and ch.isalpha() and ch not in 'Iil') if latin else '\u4e00' <= ch <= '\u9fff')]
+               ((ch.isascii() and ch.isalnum() and ch not in 'Iil1') if latin else '\u4e00' <= ch <= '\u9fff')]
     if len(samples) > 8:
         samples = [samples[i] for i in np.linspace(0,len(samples)-1,8).astype(int)]
     return samples
 
 
-def _match(rgb,bounds,bg,samples,choices):
+def _match(rgb,bounds,bg,samples,choices,sizes=None,glyph_provider=None):
     left,top,right,bottom = bounds
     height = bottom-top
     if height < 5 or not samples or not choices: return None,[],{'choices':choices,'scores':[],'details':[],'samples':len(samples)}
     scores,details = [],[]
-    sizes = list(range(max(6,round(height*.7)),max(8,round(height*1.5))))
+    sizes = sizes or list(range(max(6,round(height*.7)),max(8,round(height*1.5))))
     patches = []
     for index,char,quad in samples:
         mid = float(quad[:,0].mean())
@@ -73,21 +73,34 @@ def _match(rgb,bounds,bg,samples,choices):
         by_size = {size:[] for size in sizes}
         for index,char,mid,x0,y0,source in patches:
             for size in sizes:
-                best = (0.,False,size,x0,y0)
+                best = (0.,False,size,x0,y0,0.)
+                face_scores = []
                 for bold in (False,True):
-                    glyph = render_glyph(char,choice,bold,size,antialias=True)
-                    if glyph is None or glyph.shape[0] > source.shape[0] or glyph.shape[1] > source.shape[1]: continue
-                    values = cv2.matchTemplate(source,glyph.astype(np.float32),cv2.TM_CCOEFF_NORMED)
-                    # Do not explain a glyph by matching an unrelated neighbour or sub-stroke.
-                    centres = x0+np.arange(values.shape[1])+glyph.shape[1]/2
-                    values -= (np.abs(centres-mid)/max(1,height)*.035).astype(np.float32)[None,:]
-                    _,score,_,location = cv2.minMaxLoc(values)
-                    if score > best[0]: best = (score,bold,size,x0+location[0],y0+location[1])
+                    rendered = (glyph_provider or render_glyph)(char,choice,bold,size,antialias=True)
+                    variants=rendered if isinstance(rendered,list) else [rendered]
+                    face_best=(0.,(0,0))
+                    for glyph in variants:
+                        if glyph is None:continue
+                        # Include the blank perimeter. Matching a tightly cropped
+                        # regular glyph inside a bold glyph otherwise ignores its
+                        # extra outer strokes and spuriously favors regular weight.
+                        glyph=np.pad(glyph,((2,2),(0,0) if char.isascii() else (2,2)))
+                        if glyph.shape[0] > source.shape[0] or glyph.shape[1] > source.shape[1]:continue
+                        values = cv2.matchTemplate(source,glyph.astype(np.float32),cv2.TM_CCOEFF_NORMED)
+                        # Do not explain a glyph by matching an unrelated neighbour or sub-stroke.
+                        centres = x0+np.arange(values.shape[1])+glyph.shape[1]/2
+                        values -= (np.abs(centres-mid)/max(1,height)*.035).astype(np.float32)[None,:]
+                        _,score,_,location = cv2.minMaxLoc(values)
+                        if score>face_best[0]:face_best=(score,location)
+                    score,location=face_best
+                    face_scores.append(score)
+                    if score > best[0]: best = (score,bold,size,x0+location[0],y0+location[1],0.)
+                best=(*best[:-1],abs(face_scores[1]-face_scores[0]))
                 by_size[size].append((index,char,*best))
         # All samples from a line must agree on one size. Independent per-character
         # maxima otherwise make a wrong font look good by using a different size for every letter.
         size_scores = {size:float(np.mean([m[2] for m in matches])) for size,matches in by_size.items()}
-        winner = max(sizes,key=size_scores.get)
+        winner = max(by_size,key=size_scores.get)
         matches = by_size[winner]
         scores.append(size_scores[winner])
         details.append(matches)
@@ -95,16 +108,18 @@ def _match(rgb,bounds,bg,samples,choices):
     return (choices[best] if scores[best] >= .5 else None),details[best],{'choices':choices,'scores':scores,'details':details,'samples':len(samples)}
 
 
-def match_typography(rgb,text,box,words,fallback=None):
+def match_typography(rgb,text,box,words,fallback=None,glyph_provider=None,sizes=None):
     mask,bg,bounds = principal_ink(rgb,box)
     fallback = fallback or FONT_CHOICES[0]
     raw = np.asarray(box)
     search_bounds = (max(0,int(raw[:,0].min())),max(0,int(raw[:,1].min())),min(rgb.shape[1],int(np.ceil(raw[:,0].max()))),min(rgb.shape[0],int(np.ceil(raw[:,1].max()))))
-    chinese,matches,chinese_info = _match(rgb,search_bounds,bg,_samples(text,words,False),FONT_CHOICES)
+    ink_height=bounds[3]-bounds[1]
+    sizes=sizes or [float(s) for s in np.arange(max(6,round(ink_height*.7)),max(8,round(ink_height*1.5)),.5 if ink_height<26 else 1)]
+    chinese,matches,chinese_info = _match(rgb,search_bounds,bg,_samples(text,words,False),FONT_CHOICES,sizes=sizes,glyph_provider=glyph_provider)
     chinese = chinese or fallback
     latin_candidates = [(f'{name}, {chinese[0].split(", ")[1]}, {"serif" if name in {"Times New Roman","Georgia"} else "sans-serif"}',chinese[1],chinese[2],regular,bold)
                         for name,regular,bold in LATIN_CHOICES if load_font(regular,20) is not None]
-    latin,latin_matches,latin_info = _match(rgb,search_bounds,bg,_samples(text,words,True),latin_candidates)
+    latin,latin_matches,latin_info = _match(rgb,search_bounds,bg,_samples(text,words,True),latin_candidates,sizes=sizes,glyph_provider=glyph_provider)
     choice = latin or chinese
     good_chinese = [m for m in matches if m[2] >= .58]
     good = good_chinese if len(good_chinese) >= 3 else [m for m in latin_matches if m[2] >= .58]
@@ -115,12 +130,40 @@ def match_typography(rgb,text,box,words,fallback=None):
     return choice,size,weight,(mask,bg,bounds),{'chinese':chinese_info,'latin':latin_info}
 
 
-def smooth_typography(analyses,pooled_font=None):
+def smooth_typography(analyses,pooled_font=None,rgb=None):
     """Use a page's reliable evidence only to resolve ambiguous glyph matches.
 
     Clearly distinct headings/mixed fonts keep their own result. Chinese and Latin
     priors are independent, so a serif date does not change its Chinese neighbour.
     """
+    # Typography cohorts use measured ink color rather than title vocabulary.
+    # Distinct colored/darker faces must not inherit the body's weight prior.
+    cohorts, membership = [],[]
+    if rgb is not None:
+        for analysis in analyses:
+            mask,_,(left,top,right,bottom) = analysis[3]
+            pixels = rgb[top:bottom,left:right][mask]
+            if not len(pixels): membership.append(None); continue
+            values = pixels.astype(float).mean(axis=1)
+            color = np.median(pixels[values<=np.percentile(values,25)],axis=0)
+            group = next((i for i,c in enumerate(cohorts) if np.linalg.norm(color-c['color'])<18),None)
+            if group is None:
+                group=len(cohorts);cohorts.append({'color':color,'indices':[]})
+            cohorts[group]['indices'].append(len(membership));membership.append(group)
+    weight_priors = {}
+    for group,cohort in enumerate(cohorts):
+        votes={400:0.,700:0.}
+        for index in cohort['indices']:
+            analysis=analyses[index]
+            stats=[s for s in analysis[4].values() if s['samples']>=3 and s['scores']]
+            if not stats: continue
+            score=max(max(s['scores']) for s in stats)
+            if score<.78:continue
+            votes[analysis[2]]+=score
+        total=sum(votes.values())
+        winner=max(votes,key=votes.get)
+        if len(cohort['indices'])>=4 and total>=3 and votes[winner]/total>=.72:
+            weight_priors[group]=winner
     priors = {}
     for kind in ('chinese','latin'):
         votes = {}
@@ -169,6 +212,18 @@ def smooth_typography(analyses,pooled_font=None):
         size_matches = chinese_matches if len(chinese_matches)>=3 else all_matches
         if len(size_matches)>=3: size = float(np.median([m[4] for m in size_matches]))
         if all_matches: weight = 700 if sum(m[3] for m in all_matches)/len(all_matches) > .72 else 400
+        group=membership[len(result)] if membership else None
+        if group in weight_priors:
+            # Only uncertain face matches use cohort consensus. Clear local
+            # mixed-font/bold evidence remains independent of the page prior.
+            stats=[s for s in info.values() if s['samples']>=3 and s['scores']]
+            clear=any(max(s['scores'])>=.8 and len(s['scores'])>1 and sorted(s['scores'])[-1]-sorted(s['scores'])[-2]>=.065 for s in stats)
+            if not clear:
+                weight=weight_priors[group]
+                if weight==analyses[len(result)][2]:
+                    choice,size=analyses[len(result)][:2]
+            else:
+                choice,size,weight=analyses[len(result)][:3]
         result.append((choice,size,weight,pixel,info))
     return result
 

@@ -71,7 +71,8 @@ class Element(Model):
     textLayout: Literal["auto", "wrap", "fixed", "paragraph"] = "auto"
     flowBelow: bool = True
     style: Style = Field(default_factory=Style)
-    shape: Literal["rect", "circle", "rounded"] = "rect"
+    shape: Literal["rect", "circle", "rounded", "polygon"] = "rect"
+    shapePoints: list[tuple[float, float]] = Field(default_factory=list, max_length=128)
     assetId: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,80}$")
     fit: Literal["cover", "contain"] = "cover"
     crop: Crop = Field(default_factory=Crop)
@@ -79,6 +80,11 @@ class Element(Model):
 
     @model_validator(mode="after")
     def check_runs(self):
+        if self.shape == "polygon":
+            if self.type != "rect" or len(self.shapePoints) < 3 or any(not math.isfinite(v) or not 0 <= v <= 1 for point in self.shapePoints for v in point):
+                raise ValueError("轮廓须为归一化坐标的闭合多边形")
+        elif self.shapePoints:
+            raise ValueError("只有多边形可包含轮廓坐标")
         last = 0
         for run in self.textRuns:
             if self.type != "text" or run.start < last or run.end <= run.start or run.end > len(self.text):

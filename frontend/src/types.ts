@@ -6,7 +6,8 @@ export interface Style {
 }
 export interface Element {
   id: string; type: Exclude<Tool, 'select'>; x: number; y: number; width: number; height: number;
-  rotation: number; zIndex: number; text: string; textRuns: { start: number; end: number; fontWeight: number }[]; style: Style; shape: 'rect' | 'circle' | 'rounded';
+  rotation: number; zIndex: number; text: string; textRuns: { start: number; end: number; fontWeight: number }[]; style: Style; shape: 'rect' | 'circle' | 'rounded' | 'polygon';
+  shapePoints?: [number, number][];
   textLayout?: 'auto' | 'wrap' | 'fixed' | 'paragraph'; flowBelow?: boolean;
   assetId: string | null; fit: 'cover' | 'contain'; crop: { scale: number; offsetX: number; offsetY: number };
   sourceRegion: { detectedFrom: string; page: number; confidence: number | null; sourceFont?: string | null } | null;

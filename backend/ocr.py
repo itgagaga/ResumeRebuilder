@@ -91,11 +91,19 @@ def recognize(image: Image.Image, page_width: float, page_number: int):
     # infer_font also returns the default when evidence is inconclusive. Do not
     # promote that default into a hard prior that overwrites a better local match.
     if pooled_choice == FONT_CHOICES[0]: pooled_choice = None
-    typography = dict(zip(valid,smooth_typography(analyses,pooled_choice)))
+    typography = dict(zip(valid,smooth_typography(analyses,pooled_choice,rgb)))
+    glyph_provider=None
+    try:
+        from .browser_typography import refine_typography
+        refined,glyph_provider=refine_typography(rgb,[rows[i] for i in valid],analyses)
+        if refined is not None:typography=dict(zip(valid,refined))
+    except Exception:
+        # Missing browser/runtime or an unusual font must retain all OCR text.
+        pass
     bullets = []
     for index,(box,text,confidence,words) in enumerate(rows):
         try:
-            element = recover_text(rgb,text,box,words,confidence,factor,page_number,typography=typography.get(index))
+            element = recover_text(rgb,text,box,words,confidence,factor,page_number,typography=typography.get(index),glyph_provider=glyph_provider)
         except Exception:
             from .models import Element,SourceRegion,Style
             from .storage import new_id

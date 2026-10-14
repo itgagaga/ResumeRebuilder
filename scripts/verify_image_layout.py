@@ -63,6 +63,10 @@ def main():
                     route.fulfill(json=project.model_dump())
             elif path == f"/api/projects/{project.projectId}/reference/1":
                 route.fulfill(body=args.image.read_bytes(),content_type="image/png")
+            elif path == f"/api/projects/{project.projectId}/export":
+                from backend.models import Project
+                current = Project.model_validate(saved[-1]) if saved else project
+                route.fulfill(body=render_html(current,editable=True),content_type="text/html")
             elif path.startswith("/api/"):
                 route.fulfill(status=404,json={"detail":"QA 未实现此接口"})
             else:
@@ -89,6 +93,21 @@ def main():
             expect(editor.locator(".save-state")).to_contain_text("已保存")
             updated = next(e for e in saved[-1]["pages"][0]["elements"] if e["id"] == rich.id)
             assert updated["text"] == "测试替换文字" and all(0 <= r["start"] < r["end"] <= len(updated["text"]) for r in updated["textRuns"])
+        # The primary HTML action must open the current saved content and retain
+        # geometry in an independent editor, including normalized contours.
+        with editor.expect_popup() as opened:
+            editor.get_by_role('button',name='打开 HTML 编辑',exact=True).click()
+        standalone = opened.value
+        expect(standalone.locator('#resume-save')).to_be_visible()
+        expect(standalone.locator('[data-resume-text]')).to_have_count(sum(e.type=='text' for e in page.elements))
+        if rich:
+            expect(standalone.locator(f'[data-resume-element="{rich.id}"] [data-resume-text]')).to_have_text('测试替换文字')
+        curves = [e for e in page.elements if e.shape=='polygon']
+        for curve in curves:
+            assert standalone.locator(f'[data-resume-element="{curve.id}"]').evaluate('el=>getComputedStyle(el).clipPath').startswith('polygon(')
+        assert standalone.evaluate('window.opener === null')
+        standalone.screenshot(path=output/'standalone.png',full_page=True)
+        standalone.close()
         assert not errors,errors
         assert overflowing == 0 and editor_overflow == 0,(overflowing,editor_overflow)
         browser.close()

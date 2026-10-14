@@ -1,7 +1,6 @@
 """Recover editable geometry and typography from pixels, without exporting source image crops."""
 from functools import lru_cache
 from pathlib import Path
-import re
 
 import cv2
 import numpy as np
@@ -52,6 +51,52 @@ def tight_mask(mask):
     return mask[ys.min():ys.max()+1, xs.min():xs.max()+1], (int(xs.min()), int(ys.min()), int(xs.max()+1), int(ys.max()+1))
 
 
+def recover_soft_decorations(rgb, background, factor, page_number):
+    """Join antialiased/JPEG colors before measuring pale bands and colored contours."""
+    h,w = rgb.shape[:2]
+    pixels = rgb.astype(np.float32)
+    distance = np.linalg.norm(pixels-background,axis=2)
+    # Bright, subtly tinted backgrounds need a separate mask from dark text.
+    pale = ((distance > 4) & (distance < 65) & (pixels.min(axis=2) > 210)).astype(np.uint8)
+    pale = cv2.morphologyEx(pale,cv2.MORPH_CLOSE,np.ones((3,7),np.uint8))
+    pale = cv2.morphologyEx(pale,cv2.MORPH_OPEN,np.ones((1,max(21,round(w*.18)//2*2+1)),np.uint8))
+    chroma = pixels.max(axis=2)-pixels.min(axis=2)
+    accent = ((chroma > 30) & (distance > 45)).astype(np.uint8)
+    result = []
+    for mask,is_accent in ((pale,False),(accent,True)):
+        count,labels,stats,_ = cv2.connectedComponentsWithStats(mask,8)
+        for label in range(1,count):
+            x,y,width,height,area = stats[label]
+            band = width >= w*.2 and max(3,h*.004) <= height <= h*.12 and width/height >= 4
+            rule = width <= w*.025 and height >= h*.012 and height/width >= 2.5
+            if not (rule if is_accent else band): continue
+            if is_accent and not any(e.width >= w*.2*factor and abs(e.y-y*factor)<height*factor*.35 and abs(e.height-height*factor)<height*factor*.45 and abs(e.x-x*factor)<w*.04*factor for e in result):
+                continue
+            density = area/(width*height)
+            if density < (.25 if is_accent else .6): continue
+            patch = rgb[y:y+height,x:x+width]
+            component = (labels[y:y+height,x:x+width] == label).astype(np.uint8)
+            samples = patch[component>0]
+            if is_accent:
+                saturation = samples.max(axis=1).astype(float)-samples.min(axis=1)
+                samples = samples[saturation >= np.percentile(saturation,70)]
+            fill = np.median(samples,axis=0)
+            # Photos and gradients do not have a stable flat fill.
+            if np.percentile(np.linalg.norm(samples.astype(float)-fill,axis=1),80) > (32 if is_accent else 12): continue
+            contours,_ = cv2.findContours(component,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            contour = max(contours,key=cv2.contourArea)
+            points = cv2.approxPolyDP(contour,max(.6,min(width,height)*.025),True)[:,0]
+            if len(points)<3 or len(points)>128: continue
+            polygon = is_accent and density < .88
+            result.append(Element(id=new_id('decoration'),type='rect',x=float(x*factor),y=float(y*factor),
+                                  width=float(width*factor),height=float(height*factor),zIndex=1 if is_accent else 0,
+                                  shape='polygon' if polygon else 'rect',
+                                  shapePoints=[(float(a/max(1,width-1)),float(b/max(1,height-1))) for a,b in points] if polygon else [],
+                                  style=Style(background=hex_color(fill)),
+                                  sourceRegion=SourceRegion(detectedFrom='pixel-color-contour' if is_accent else 'pixel-pale-band',page=page_number)))
+    return result
+
+
 def recover_shapes(image, page_width, page_number):
     if max(image.size)>2400:
         image = image.copy()
@@ -87,10 +132,18 @@ def recover_shapes(image, page_width, page_number):
                                   width=float(width*factor),height=float(height*factor),zIndex=1 if color.max()-color.min()>70 else 0,
                                   style=Style(background=fill),
                                   sourceRegion=SourceRegion(detectedFrom="pixel-flat-region",page=page_number)))
+    soft = recover_soft_decorations(rgb,background,factor,page_number)
+    # Prefer one coherent contour to many disconnected quantization buckets.
+    for decoration in soft:
+        def inside(shape):
+            overlap = max(0,min(shape.x+shape.width,decoration.x+decoration.width)-max(shape.x,decoration.x))*max(0,min(shape.y+shape.height,decoration.y+decoration.height)-max(shape.y,decoration.y))
+            return shape.zIndex == decoration.zIndex and overlap >= shape.width*shape.height*.85
+        result = [shape for shape in result if not inside(shape)]
+        result.append(decoration)
     merged = []
     for shape in sorted(result,key=lambda e:(e.style.background,e.y,e.x)):
         previous = merged[-1] if merged else None
-        if (previous and previous.style.background == shape.style.background and abs(previous.y-shape.y)<factor
+        if (previous and previous.shape == shape.shape == 'rect' and previous.style.background == shape.style.background and abs(previous.y-shape.y)<factor
                 and abs(previous.height-shape.height)<factor and 0<=shape.x-previous.x-previous.width<=page_width*.02):
             previous.width = shape.x+shape.width-previous.x
         else:
@@ -137,12 +190,16 @@ def font_file(char, choice, bold):
 def render_glyph(char, font_choice, bold, size=40, antialias=False):
     latin = ord(char) < 128
     filename = font_file(char,font_choice,bold)
-    font = load_font(filename, size)
+    synthetic = bold and font_choice[1] == font_choice[2] and not latin
+    resolution = 4 if antialias and (synthetic or size != round(size)) else 1
+    font = load_font(filename, round(size*resolution))
     if font is None:
         return None
-    stroke = 1 if bold and font_choice[1] == font_choice[2] and not latin else 0
-    canvas = Image.new("L", (size*3,size*3))
-    ImageDraw.Draw(canvas).text((size//2,size//2),char,font=font,fill=255,stroke_width=stroke)
+    stroke = max(1,round(size*resolution/(96 if antialias else 48))) if synthetic else 0
+    canvas = Image.new("L", (round(size*3*resolution),round(size*3*resolution)))
+    ImageDraw.Draw(canvas).text((round(size*resolution/2),round(size*resolution/2)),char,font=font,fill=255,stroke_width=stroke)
+    if resolution>1:
+        canvas=canvas.resize((round(size*3),round(size*3)),Image.Resampling.LANCZOS)
     box = canvas.getbbox()
     if not box:
         return None
@@ -252,35 +309,35 @@ def weight_fraction(source,text,choice,size):
     return float((source.mean()-values[0])/max(.04,values[1]-values[0]))
 
 
-def infer_runs(rgb,text,words,choice,size,background):
-    positions,cursor = {},0
-    for char,_,quad in words or []:
-        index = text.find(char,cursor)
-        if len(char) == 1 and quad is not None and index >= 0:
-            positions[index] = np.asarray(quad)
-            cursor = index+1
-    candidates = [(match.start(),match.end()) for match in re.finditer(r"[A-Za-z][A-Za-z0-9_/.+-]{2,}",text)]
-    prefix = re.match(r"^.{1,24}?[:：]",text)
-    if prefix: candidates.append((0,prefix.end()))
-    selected = []
-    for start,end in candidates:
-        boxes = [positions[index] for index in range(start,end) if index in positions]
-        if len(boxes) < max(2,(end-start)*.6): continue
-        points = np.concatenate(boxes)
-        left,top = np.floor(points.min(axis=0)).astype(int)
-        right,bottom = np.ceil(points.max(axis=0)).astype(int)
-        left,right = max(0,left-1),min(rgb.shape[1],right+2)
-        top,bottom = max(0,top),min(rgb.shape[0],bottom)
-        mask,_ = ink_mask(rgb[top:bottom,left:right],background)
-        tight = tight_mask(mask)
-        if tight and weight_fraction(tight[0],text[start:end],choice,size) > .8:
-            selected.append((start,end))
-    # Merge overlapping spans; ranges refer only to the current text, never to a saved old string.
-    merged = []
-    for start,end in sorted(selected):
-        if merged and start <= merged[-1][1]: merged[-1] = (merged[-1][0],max(end,merged[-1][1]))
-        else: merged.append((start,end))
-    return [TextRun(start=start,end=end,fontWeight=700) for start,end in merged]
+def infer_runs(rgb,text,words,choice,size,background,glyph_provider=None,match_info=None):
+    # Inspect every recognized glyph, including Chinese phrases in the middle
+    # of a sentence. No colon/prefix/English-token assumptions.
+    from .typography import _match,indexed_words
+    reliable={}
+    if glyph_provider is not None and match_info:
+        for kind,info in match_info.items():
+            scores=sorted(info['scores'])
+            reliable[kind]=bool(scores) and scores[-1]>=.9 and (len(scores)<2 or scores[-1]-scores[-2]>=.03)
+    samples=[(index,char,quad) for index,char,score,quad in indexed_words(text,words) if score>=.9 and char.isalnum()]
+    if reliable:samples=[sample for sample in samples if reliable.get('latin' if sample[1].isascii() else 'chinese',False)]
+    if not samples:return []
+    points=np.concatenate([quad for _,_,quad in samples])
+    bounds=(max(0,int(points[:,0].min())-2),max(0,int(points[:,1].min())-2),min(rgb.shape[1],int(np.ceil(points[:,0].max()))+2),min(rgb.shape[0],int(np.ceil(points[:,1].max()))+2))
+    sizes=[float(s) for s in np.arange(max(5,size-1),size+1.1,.5)]
+    _,matches,_=_match(rgb,bounds,background,samples,[choice],sizes=sizes,glyph_provider=glyph_provider)
+    selected=[m[0] for m in matches if m[2]>=.65 and m[3] and m[7]>=.025]
+    # A weak interior character should not split an otherwise consistent bold
+    # word. Its own paired-face score must also support bold; no lexical rules.
+    strong=set(selected)
+    selected += [m[0] for m in matches if m[0] not in strong and m[2]>=.78 and m[3] and m[7]>=.008 and
+                 (m[0]-1 in strong and m[0]+1 in strong)]
+    selected.sort()
+    groups=[]
+    for index in selected:
+        if groups and (index == groups[-1][-1]+1 or all(not ch.isalnum() for ch in text[groups[-1][-1]+1:index])):
+            groups[-1].append(index)
+        else:groups.append([index])
+    return [TextRun(start=group[0],end=group[-1]+1,fontWeight=700) for group in groups if len(group)>=2]
 
 
 def text_metrics(text, choice, size, weight, runs):
@@ -301,7 +358,7 @@ def text_metrics(text, choice, size, weight, runs):
     return sum(widths), max(heights,default=size*.9)
 
 
-def recover_text(rgb, text, box, words, confidence, factor, page_number, font_choice=None, typography=None):
+def recover_text(rgb, text, box, words, confidence, factor, page_number, font_choice=None, typography=None,glyph_provider=None):
     from .typography import match_typography, restore_spaces
     text = restore_spaces(text,words)
     choice,matched_size,matched_weight,pixel,match_info = typography or match_typography(rgb,text,box,words,font_choice)
@@ -327,7 +384,11 @@ def recover_text(rgb, text, box, words, confidence, factor, page_number, font_ch
     _,probe_height = text_metrics(text,choice,40,400,[])
     initial_size = max(5,min(500,matched_size or ink_height*40/max(1,probe_height)))
     weight = matched_weight if matched_size else 700 if tight and weight_fraction(tight[0],text,choice,initial_size) > .6 else 400
-    runs = infer_runs(rgb,text,words,choice,initial_size,bg) if weight == 400 else []
+    if weight == 700 and tight is not None and choice[1] != choice[2] and weight_fraction(tight[0],text,choice,initial_size) < .35:
+        # A few bold glyphs can dominate the sampled character votes. The full
+        # line's occupied area distinguishes a mixed sentence from an all-bold face.
+        weight = 400
+    runs = infer_runs(rgb,text,words,choice,initial_size,bg,glyph_provider,match_info) if weight == 400 else []
     # Match actual glyph height, then fit the advance width of the recognised line into its source bounds.
     _, probe_height = text_metrics(text,choice,40,weight,runs)
     size = initial_size if matched_size else max(5,min(500,ink_height*40/max(1,probe_height)))

@@ -3,7 +3,7 @@ import { ArrowUpRight, ArrowLeft, Upload, Download, Undo2, Redo2, MousePointer2,
 import Canvas from './Canvas'
 import SourcePreview from './SourcePreview'
 import Inspector from './Inspector'
-import { download, request, save, upload, uploadAsset } from './api'
+import { download, exportBlob, request, save, upload, uploadAsset } from './api'
 import { id, type Element, type Project, type Tool } from './types'
 import { layoutText, rebaseTextRuns } from './textEditing'
 import { mergeParagraphLine, nextParagraphLine, organizeParagraphs, paragraphCandidates } from './paragraphs'
@@ -30,7 +30,7 @@ export default function App() {
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
   const [overflow, setOverflow] = useState<string[]>([])
   const [exportDialog, setExportDialog] = useState(false)
-  const [exportFormat, setExportFormat] = useState('pdf')
+  const [exportFormat, setExportFormat] = useState('html')
   const [includeReference, setIncludeReference] = useState(true)
   const [showWarnings, setShowWarnings] = useState(false)
   const [health, setHealth] = useState({ ocrReady: false, pdfReady: false })
@@ -89,6 +89,21 @@ export default function App() {
   function redo() { if (!future.length || !project) return; const next = future[future.length-1]; setPast(p => [...p, project]); setFuture(future.slice(0,-1)); setProject({ ...next, assets: project.assets }); setSelected(current => next.pages[Math.min(pageIndex,next.pages.length-1)].elements.some(e => e.id === current) ? current : null); setPageIndex(i => Math.min(i,next.pages.length-1)) }
   async function replaceImage(file: File) { if (!project || !active) return; await task('正在保存替换图片…', async () => { const asset = await uploadAsset(project.projectId, file); const next = structuredClone(project); next.assets[asset.id] = asset; next.pages[pageIndex].elements = next.pages[pageIndex].elements.map(e => e.id === active.id ? { ...e, assetId: asset.id, crop: { scale: 1, offsetX: 0, offsetY: 0 } } : e); change(next); notify('新图片已添加，可以在右侧调整裁剪。') }) }
   async function exportProject() { if (!project) return; await task(exportFormat === 'pdf' ? '正在生成 PDF，请等待字体与图片加载…' : '正在生成导出文件…', async () => { await save(project); setSaved(JSON.stringify(project)); await download(project.projectId, exportFormat, includeReference); setExportDialog(false); notify('已导出当前内容。') }) }
+  async function openHtmlEditor() {
+    if (!project) return
+    const tab = window.open('about:blank', '_blank')
+    if (!tab) { notify('浏览器阻止了新窗口，请允许弹出窗口，或使用导出 HTML。', true); return }
+    tab.opener = null
+    await task('正在生成可编辑 HTML…', async () => {
+      try {
+        await save(project); setSaved(JSON.stringify(project))
+        const url = URL.createObjectURL(await exportBlob(project.projectId, 'html', false))
+        tab.location.href = url
+        setTimeout(() => URL.revokeObjectURL(url), 60000)
+        notify('已打开独立 HTML。修改后在新页面保存 HTML；文件修改不会自动同步回工程。')
+      } catch (error) { tab.close(); throw error }
+    })
+  }
   async function deleteReference() { if (!project || !window.confirm('永久删除本工程的原始参考图？编辑内容和替换图片会保留，撤销历史会同时清空。')) return; await task('正在删除原始参考…', async () => { await save(project); accept(await request<Project>(`/projects/${project.projectId}/reference`, { method: 'DELETE' })); notify('原始参考已删除，撤销历史已清空。') }) }
   function fit() { if (!page || !editorColumn.current) return; const width = editorColumn.current.clientWidth-64; setZoom(Math.min(1.4,Math.max(0.2,width/(page.width*(page.unit === 'pt' ? 96/72 : 1))))) }
   useEffect(() => {
@@ -115,7 +130,7 @@ export default function App() {
   return <div className={project ? 'app editor-app' : 'app welcome-app'}>
     {fileInputs}
     <header className="topbar"><button className="brand" onClick={() => { if (canReplace()) { setProject(null); setSaved(''); refreshRecent() } }} title="回到工作台"><span className="brand-icon"><Layers size={21}/></span><span>Resume<span className="brand-light"> Rebuilder</span></span><span className="version">LOCAL</span></button>
-      {project ? <><div className="project-title"><input aria-label="工程名称" value={project.name} onChange={event => change({ ...project, name: event.target.value.slice(0,150) })}/><span className={`save-state ${dirty ? 'dirty' : ''}`}>{dirty ? '未保存' : <><Check size={12}/>已保存</>}</span></div><div className="header-actions"><button className="button quiet" onClick={() => fileInput.current?.click()}><FolderOpen size={16}/>导入 / 打开</button><button className="button quiet" onClick={saveProject}><Save size={16}/>保存</button><button className="button primary" onClick={() => setExportDialog(true)}><Download size={16}/>导出<ChevronRight size={14}/></button></div></> : <span className="local-status"><span className="status-dot"/>本地运行 · 文件留在你的电脑</span>}
+      {project ? <><div className="project-title"><input aria-label="工程名称" value={project.name} onChange={event => change({ ...project, name: event.target.value.slice(0,150) })}/><span className={`save-state ${dirty ? 'dirty' : ''}`}>{dirty ? '未保存' : <><Check size={12}/>已保存</>}</span></div><div className="header-actions"><button className="button quiet" onClick={() => fileInput.current?.click()}><FolderOpen size={16}/>导入 / 打开</button><button className="button quiet" onClick={saveProject}><Save size={16}/>保存</button><button className="button primary" onClick={openHtmlEditor}><ArrowUpRight size={16}/>打开 HTML 编辑</button><button className="button quiet" onClick={() => setExportDialog(true)}><Download size={16}/>导出<ChevronRight size={14}/></button></div></> : <span className="local-status"><span className="status-dot"/>本地运行 · 文件留在你的电脑</span>}
     </header>
     {!project ? <main className="welcome" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) void importFile(file) }}>
       <section className="welcome-copy"><div className="eyebrow"><span/>你的简历，重新编辑</div><h1>保留喜欢的版式，<br/>写下自己的故事<span>。</span></h1><p className="lead">从 PDF、图片或截图开始，将文字与版式还原为可编辑的简历。<br/>替换头像，微调排版，在本地完成你的下一份简历。</p>

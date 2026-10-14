@@ -30,6 +30,7 @@ export function elementStyle(e: Element): React.CSSProperties {
     color: e.style.color, background: e.style.background, lineHeight: e.style.lineHeight, textAlign: e.style.textAlign,
     border: `${e.style.borderWidth}px solid ${e.style.borderColor}`,
     borderRadius: e.shape === 'circle' ? '50%' : e.shape === 'rounded' ? e.style.borderRadius || 10 : e.style.borderRadius,
+    clipPath: e.shape === 'polygon' ? `polygon(${e.shapePoints?.map(([x,y]) => `${x*100}% ${y*100}%`).join(',')})` : undefined,
     overflow: e.type === 'image_placeholder' ? 'hidden' : 'visible', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', boxSizing: 'border-box' }
 }
 

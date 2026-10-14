@@ -37,6 +37,9 @@ def render_html(project, *, editable=False):
                 f"border-radius:{radius};"
             )
             content = ""
+            if element.shape == "polygon":
+                points = ','.join(f'{x*100:.4f}% {y*100:.4f}%' for x,y in element.shapePoints)
+                properties += f"clip-path:polygon({points});"
             attributes = ""
             if editable:
                 attributes = (f' data-resume-element="{element.id}" data-kind="{element.type}"'
