@@ -10,3 +10,5 @@ __pycache__/
 artifacts/
 
 frontend/node_modules
+
+开发文档.md

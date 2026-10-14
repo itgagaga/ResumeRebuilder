@@ -51,6 +51,12 @@ class SourceRegion(Model):
     sourceFont: str | None = Field(default=None, max_length=200)
 
 
+class TextRun(Model):
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    fontWeight: int = Field(default=700,ge=100,le=900)
+
+
 class Element(Model):
     id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,80}$")
     type: Literal["text", "line", "rect", "image_placeholder"]
@@ -61,12 +67,22 @@ class Element(Model):
     rotation: float = Field(default=0, ge=-360, le=360)
     zIndex: int = Field(default=1, ge=-10000, le=10000)
     text: str = Field(default="", max_length=100000)
+    textRuns: list[TextRun] = Field(default_factory=list,max_length=2000)
     style: Style = Field(default_factory=Style)
     shape: Literal["rect", "circle", "rounded"] = "rect"
     assetId: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,80}$")
     fit: Literal["cover", "contain"] = "cover"
     crop: Crop = Field(default_factory=Crop)
     sourceRegion: SourceRegion | None = None
+
+    @model_validator(mode="after")
+    def check_runs(self):
+        last = 0
+        for run in self.textRuns:
+            if self.type != "text" or run.start < last or run.end <= run.start or run.end > len(self.text):
+                raise ValueError("局部文字样式范围不合法")
+            last = run.end
+        return self
 
 
 class Page(Model):

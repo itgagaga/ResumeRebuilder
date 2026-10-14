@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ImagePlus } from 'lucide-react'
 import { assetUrl } from './api'
 import { createElement, type Element, type Page, type Project, type Tool } from './types'
+import TextContent from './TextContent'
 
 type Point = { x: number; y: number }
 type Drag = { start: Point; kind: 'move' | 'resize' | 'draw'; element?: Element; handle?: string; original: Project }
@@ -15,7 +16,7 @@ export function ElementView({ element: e, projectId, editing = false }: { elemen
   if (e.type === 'image_placeholder') {
     return e.assetId ? <img draggable={false} alt="用户上传的图片" src={assetUrl(projectId, e.assetId)} style={{ width: '100%', height: '100%', display: 'block', objectFit: e.fit, objectPosition: `${50+e.crop.offsetX/2}% ${50+e.crop.offsetY/2}%`, transform: `translate(${e.crop.offsetX/2}%,${e.crop.offsetY/2}%) scale(${e.crop.scale})` }} /> : editing ? <div className="photo-empty"><ImagePlus size={Math.min(24, e.height/3)} /><span>上传图片</span></div> : null
   }
-  return e.type === 'text' ? <span className="text-content" data-text-id={e.id} style={{ display: 'block', width: `${100/e.style.fontScaleX}%`, height: '100%', transform: `scaleX(${e.style.fontScaleX})`, transformOrigin: 'left top' }}>{e.text}</span> : null
+  return e.type === 'text' ? <span className="text-content" data-text-id={e.id} style={{ display: 'block', width: `${100/e.style.fontScaleX}%`, height: '100%', transform: `scaleX(${e.style.fontScaleX})`, transformOrigin: 'left top' }}><TextContent element={e}/></span> : null
 }
 
 export function elementStyle(e: Element): React.CSSProperties {
@@ -37,6 +38,7 @@ export default function Canvas({ project, page, pageIndex, zoom, tool, selected,
   const scale = zoom * (page.unit === 'pt' ? 96/72 : 1)
   const point = (event: React.PointerEvent): Point => { const rect = root.current!.getBoundingClientRect(); return { x: (event.clientX-rect.left)/scale, y: (event.clientY-rect.top)/scale } }
   const updateElement = (updated: Element, record = true, original?: Project) => {
+    if (page.elements.find(e => e.id === updated.id)?.text !== updated.text) updated = { ...updated, textRuns: [] }
     const result = structuredClone(project)
     result.pages[pageIndex].elements = result.pages[pageIndex].elements.map(e => e.id === updated.id ? updated : e)
     change(result, record, original)

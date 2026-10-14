@@ -8,6 +8,16 @@ from .storage import asset_path
 from .browser import launch_browser
 
 
+def text_html(element):
+    parts, cursor = [], 0
+    for run in element.textRuns:
+        parts.append(html.escape(element.text[cursor:run.start]))
+        parts.append(f'<span style="font-weight:{run.fontWeight}">{html.escape(element.text[run.start:run.end])}</span>')
+        cursor = run.end
+    parts.append(html.escape(element.text[cursor:]))
+    return ''.join(parts)
+
+
 def render_html(project):
     pages = []
     css_pages = []
@@ -35,7 +45,7 @@ def render_html(project):
                     f"line-height:{style.lineHeight};text-align:{style.textAlign};white-space:pre-wrap;overflow-wrap:break-word;"
                 )
                 content = (f'<span style="display:block;width:{100/style.fontScaleX}%;height:100%;transform:scaleX({style.fontScaleX});transform-origin:left top;">'
-                           + html.escape(element.text) + '</span>')
+                           + text_html(element) + '</span>')
             elif element.type == "image_placeholder":
                 properties += "overflow:hidden;"
                 if element.assetId:

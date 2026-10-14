@@ -6,8 +6,6 @@ import numpy as np
 from PIL import Image
 
 from .config import AppError
-from .models import Element, SourceRegion, Style
-from .storage import new_id
 
 _engine = None
 _lock = threading.Lock()
@@ -55,18 +53,25 @@ def recognize(image: Image.Image, page_width: float, page_number: int):
         image.thumbnail((2400, 2400))
     factor = page_width / image.width
     with _lock:
-        result = get_engine()(np.asarray(image))
+        # RapidOCR expects BGR for numpy arrays but handles PIL's RGB explicitly.
+        result = get_engine()(image,return_word_box=True,return_single_char_box=True)
     elements = []
     if result.boxes is None:
         return elements
-    for box, text, confidence in zip(result.boxes, result.txts, result.scores):
-        x, y = np.min(box, axis=0)
-        right, bottom = np.max(box, axis=0)
-        width, height = (right - x) * factor, (bottom - y) * factor
-        elements.append(Element(
-            id=new_id("text"), type="text", x=float(x*factor), y=float(y*factor),
-            width=max(1, float(width)+2), height=max(1, float(height)*1.25),
-            text=str(text), style=Style(fontSize=max(4, min(500, float(height)*0.82))),
-            sourceRegion=SourceRegion(detectedFrom="ocr", page=page_number, confidence=float(confidence)),
-        ))
-    return elements
+    from .image_layout import recover_text, infer_font, char_evidence, recover_bullet
+    rgb = np.asarray(image)
+    samples = []
+    for index in range(0,len(result.txts),max(1,len(result.txts)//8)):
+        if index < len(result.word_results):
+            samples.extend(char_evidence(rgb,str(result.txts[index]),result.word_results[index])[:8])
+    choice = infer_font(samples)
+    bullets = []
+    for index,(box, text, confidence) in enumerate(zip(result.boxes, result.txts, result.scores)):
+        words = result.word_results[index] if index < len(result.word_results) else ()
+        element = recover_text(rgb,str(text),box,words,confidence,factor,page_number,choice)
+        bullet = recover_bullet(rgb,element,box,factor,page_number)
+        if bullet: bullets.append(bullet)
+        elements.append(element)
+    from .font_metrics import calibrate_text_widths
+    calibrate_text_widths(elements,page_width)
+    return elements+bullets

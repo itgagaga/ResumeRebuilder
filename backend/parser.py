@@ -237,10 +237,12 @@ def import_source(data, name, project_id=None):
 def safe_ocr(image, width, number, project):
     try:
         elements = recognize(image, width, number)
-        project.warnings.append(f"第 {number} 页使用本地 OCR，字体、颜色与识别文字需要人工校对；可在原页框选图片区。")
+        from .image_layout import recover_shapes
+        shapes, _ = recover_shapes(image,width,number)
+        project.warnings.append(f"第 {number} 页使用本地 OCR 与像素样式估计，已重建基础色块；字体、粗细和识别文字仍需校对，可在原页框选图片区。")
         if not elements:
             project.warnings.append(f"第 {number} 页未识别到文字，可手动新增文字框。")
-        return elements
+        return shapes+elements
     except Exception:
         project.warnings.append(f"第 {number} 页 OCR 不可用或识别失败，请检查本地安装；仍可手动新增文字和图片区。")
         return []

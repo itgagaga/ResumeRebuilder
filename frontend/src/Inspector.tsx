@@ -7,7 +7,7 @@ function NumberField({ label, value, onChange, min = -10000, max = 10000, step =
 
 interface Props { element?: Element; page: Page; patch: (e: Element) => void; remove: () => void; duplicate: () => void; replaceImage: () => void; overflow: boolean; select: (id: string) => void }
 export default function Inspector({ element: e, page, patch, remove, duplicate, replaceImage, overflow, select }: Props) {
-  const style = (values: Partial<Element['style']>) => e && patch({ ...e, style: { ...e.style, ...values } })
+  const style = (values: Partial<Element['style']>) => e && patch({ ...e, textRuns: values.fontWeight !== undefined ? [] : e.textRuns, style: { ...e.style, ...values } })
   return <aside className="inspector">
     <div className="panel-title"><span>属性</span><span className="micro-label">PROPERTIES</span></div>
     {e ? <>
@@ -20,7 +20,8 @@ export default function Inspector({ element: e, page, patch, remove, duplicate, 
         <label className="field-label">字体<select value={e.style.fontFamily} onChange={event => style({ fontFamily: event.target.value })}><option value="Arial, Microsoft YaHei, sans-serif">微软雅黑 / Arial</option><option value="SimSun, Georgia, serif">宋体 / SimSun</option><option value="Georgia, SimSun, serif">Georgia / 衬线体</option><option value="Consolas, monospace">等宽字体 / Consolas</option>{!['Arial, Microsoft YaHei, sans-serif', 'SimSun, Georgia, serif', 'Georgia, SimSun, serif', 'Consolas, monospace'].includes(e.style.fontFamily) && <option value={e.style.fontFamily}>{e.style.fontFamily}</option>}</select></label>
         <div className="field-grid"><NumberField label="字号" value={e.style.fontSize} min={1} max={500} onChange={fontSize => style({ fontSize })}/><NumberField label="行高" value={e.style.lineHeight} min={0.5} max={5} step={0.05} onChange={lineHeight => style({ lineHeight })}/></div>
         <NumberField label="字宽" value={e.style.fontScaleX} min={0.4} max={2} step={0.05} onChange={fontScaleX => style({ fontScaleX })}/>
-        {e.sourceRegion?.sourceFont && <p className="hint">源字体：{e.sourceRegion.sourceFont}。使用本地后备字体，字宽已按原行边界估计，可手动校正。</p>}
+        {e.sourceRegion?.sourceFont && <p className="hint">字体线索：{e.sourceRegion.sourceFont}。字宽按原行边界校准，字体和粗细可手动调整。</p>}
+        {!!e.textRuns?.length && <p className="hint">已恢复行内局部粗体。修改文字内容或字重后将重新使用整框样式。</p>}
         <div className="field-grid"><label className="field-label">字重<select value={e.style.fontWeight} onChange={event => style({ fontWeight: +event.target.value })}><option value={400}>常规</option><option value={500}>中等</option><option value={700}>粗体</option>{![400, 500, 700].includes(e.style.fontWeight) && <option value={e.style.fontWeight}>{e.style.fontWeight}</option>}</select></label><label className="field-label">对齐<select value={e.style.textAlign} onChange={event => style({ textAlign: event.target.value as Element['style']['textAlign'] })}><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option><option value="justify">两端对齐</option></select></label></div>
         <div className="color-field"><label>文字颜色</label><input type="color" value={e.style.color} onChange={event => style({ color: event.target.value })}/><span>{e.style.color}</span></div>
         <label className="check-field"><input type="checkbox" checked={e.style.fontStyle === 'italic'} onChange={event => style({ fontStyle: event.target.checked ? 'italic' : 'normal' })}/>斜体</label>
