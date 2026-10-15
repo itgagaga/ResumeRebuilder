@@ -313,8 +313,11 @@ def infer_runs(rgb,text,words,choice,size,background,glyph_provider=None,match_i
     # Inspect every recognized glyph, including Chinese phrases in the middle
     # of a sentence. No colon/prefix/English-token assumptions.
     from .typography import _match,indexed_words
+    # Short numeric labels often have inconsistent digit hinting, while their
+    # overall face is measurable. Do not invent mixed weight within such tokens.
+    if not any(ch.isalpha() for ch in text):return []
     reliable={}
-    if glyph_provider is not None and match_info:
+    if match_info:
         for kind,info in match_info.items():
             scores=sorted(info['scores'])
             reliable[kind]=bool(scores) and scores[-1]>=.9 and (len(scores)<2 or scores[-1]-scores[-2]>=.03)
@@ -324,7 +327,7 @@ def infer_runs(rgb,text,words,choice,size,background,glyph_provider=None,match_i
     points=np.concatenate([quad for _,_,quad in samples])
     bounds=(max(0,int(points[:,0].min())-2),max(0,int(points[:,1].min())-2),min(rgb.shape[1],int(np.ceil(points[:,0].max()))+2),min(rgb.shape[0],int(np.ceil(points[:,1].max()))+2))
     sizes=[float(s) for s in np.arange(max(5,size-1),size+1.1,.5)]
-    _,matches,_=_match(rgb,bounds,background,samples,[choice],sizes=sizes,glyph_provider=glyph_provider)
+    _,matches,_=_match(rgb,bounds,background,samples,[choice],sizes=sizes,glyph_provider=glyph_provider,localized=True)
     selected=[m[0] for m in matches if m[2]>=.65 and m[3] and m[7]>=.025]
     # A weak interior character should not split an otherwise consistent bold
     # word. Its own paired-face score must also support bold; no lexical rules.
@@ -383,6 +386,7 @@ def recover_text(rgb, text, box, words, confidence, factor, page_number, font_ch
         foreground = "#222222"
     _,probe_height = text_metrics(text,choice,40,400,[])
     initial_size = max(5,min(500,matched_size or ink_height*40/max(1,probe_height)))
+    text=restore_spaces(text,words,rgb,choice,initial_size)
     weight = matched_weight if matched_size else 700 if tight and weight_fraction(tight[0],text,choice,initial_size) > .6 else 400
     if weight == 700 and tight is not None and choice[1] != choice[2] and weight_fraction(tight[0],text,choice,initial_size) < .35:
         # A few bold glyphs can dominate the sampled character votes. The full

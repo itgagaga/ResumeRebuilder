@@ -51,7 +51,7 @@ def _samples(text,words,latin):
     return samples
 
 
-def _match(rgb,bounds,bg,samples,choices,sizes=None,glyph_provider=None):
+def _match(rgb,bounds,bg,samples,choices,sizes=None,glyph_provider=None,localized=False):
     left,top,right,bottom = bounds
     height = bottom-top
     if height < 5 or not samples or not choices: return None,[],{'choices':choices,'scores':[],'details':[],'samples':len(samples)}
@@ -67,17 +67,21 @@ def _match(rgb,bounds,bg,samples,choices,sizes=None,glyph_provider=None):
         contrast = np.linalg.norm(patch.astype(np.float32)-bg.astype(np.float32),axis=2)
         source = np.clip(contrast/max(1,float(np.percentile(contrast,98))),0,1).astype(np.float32)
         source[source < .05] = 0
-        patches.append((index,char,mid,x0,y0,source))
+        patches.append((index,char,mid,float(np.ptp(quad[:,0])),x0,y0,source))
     if not patches: return None,[],{'choices':choices,'scores':[],'details':[],'samples':0}
     for choice in choices:
         by_size = {size:[] for size in sizes}
-        for index,char,mid,x0,y0,source in patches:
+        for index,char,mid,char_width,x0,y0,source in patches:
             for size in sizes:
                 best = (0.,False,size,x0,y0,0.)
                 face_scores = []
                 for bold in (False,True):
                     rendered = (glyph_provider or render_glyph)(char,choice,bold,size,antialias=True)
                     variants=rendered if isinstance(rendered,list) else [rendered]
+                    if localized and glyph_provider is None and bold and not char.isascii() and choice[1]==choice[2]:
+                        # Raster screenshots can use a full-pixel synthetic
+                        # stroke; keep it alongside the browser-like subpixel face.
+                        variants=variants+[render_glyph(char,choice,bold,round(size),antialias=False)]
                     face_best=(0.,(0,0))
                     for glyph in variants:
                         if glyph is None:continue
@@ -90,6 +94,10 @@ def _match(rgb,bounds,bg,samples,choices,sizes=None,glyph_provider=None):
                         # Do not explain a glyph by matching an unrelated neighbour or sub-stroke.
                         centres = x0+np.arange(values.shape[1])+glyph.shape[1]/2
                         values -= (np.abs(centres-mid)/max(1,height)*.035).astype(np.float32)[None,:]
+                        if localized:
+                            # A neighboring letter/sub-stroke cannot be used as
+                            # evidence for this character's weight.
+                            values[:,np.abs(centres-mid)>max(3,char_width*.65)]=-1
                         _,score,_,location = cv2.minMaxLoc(values)
                         if score>face_best[0]:face_best=(score,location)
                     score,location=face_best
@@ -228,7 +236,7 @@ def smooth_typography(analyses,pooled_font=None,rgb=None):
     return result
 
 
-def restore_spaces(text,words):
+def restore_spaces(text,words,rgb=None,choice=None,size=None):
     """Recover explicit geometric gaps between ASCII words, without language-specific word lists."""
     items = list(indexed_words(text,words))
     gaps = [float(b[3][:,0].min()-a[3][:,0].max()) for a,b in zip(items,items[1:]) if b[0] == a[0]+1]
@@ -240,4 +248,25 @@ def restore_spaces(text,words):
         height = float(np.median([np.ptp(a[3][:,1]),np.ptp(b[3][:,1])]))
         gap = float(b[3][:,0].min()-a[3][:,0].max())
         if gap > max(3,baseline+height*.35): insertions.add(b[0])
+    if rgb is not None and choice is not None and size is not None:
+        from .image_layout import char_evidence,font_file
+        evidence={i:(ch,mask,bounds) for i,ch,mask,bounds in char_evidence(rgb,text,words)}
+        for a,b in zip(items,items[1:]):
+            if b[0]!=a[0]+1 or a[0] not in evidence or b[0] not in evidence:continue
+            if not (a[1].isascii() and b[1].isascii() and a[1].isalnum() and b[1].isalnum()):continue
+            font=load_font(font_file(a[1],choice,False),max(5,round(size)))
+            if font is None:continue
+            gap=evidence[b[0]][2][0]-evidence[a[0]][2][2]
+            first,second=render_glyph(a[1],choice,False,max(5,round(size))),render_glyph(b[1],choice,False,max(5,round(size)))
+            if first is None or second is None:continue
+            # A detached stem/radical is not the whole letter. Using it as a
+            # boundary can insert a space inside an intact word.
+            ratios=[(evidence[item[0]][1].shape[1]/evidence[item[0]][1].shape[0])/(glyph.shape[1]/glyph.shape[0]) for item,glyph in ((a,first),(b,second))]
+            if any(not .65<=ratio<=1.5 for ratio in ratios):continue
+            heights=[evidence[item[0]][1].shape[0]/glyph.shape[0] for item,glyph in ((a,first),(b,second))]
+            if any(not .75<=ratio<=1.3 for ratio in heights):continue
+            bearing=max(0,(font.getlength(a[1])-first.shape[1]+font.getlength(b[1])-second.shape[1])/2)
+            # OCR advance boxes often touch across an explicit word space.
+            # Recover it from ink separation after allowing normal side bearings.
+            if gap>=max(3,bearing+font.getlength(' ')*.75):insertions.add(b[0])
     return ''.join((' ' if i in insertions else '')+ch for i,ch in enumerate(text))

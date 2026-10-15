@@ -25,23 +25,35 @@ THEMES=[('sans','Arial, Microsoft YaHei, sans-serif','#f9fafc'),
         ('deng','Arial, DengXian, sans-serif','#f1f7f5'),
         ('mixed','Calibri, Microsoft YaHei, sans-serif','#eef5fc')]
 
-def fixture(family,fill):
+def fixture(family,fill,dense=False):
     records=[('研发实践',True,None),('2022-08 — 2025-11',True,None),
              ('负责可靠系统设计与持续质量改进工作',False,(4,8)),
              ('持续验证项目功能，整理文档并改善交付流程。',False,None),
              ('工具与方法',False,None),('Data Analysis and Document Search',False,(5,13)),
              ('参与代码审查与自动化测试，跟踪结果并复盘。',False,None)]
+    if dense:
+        records=[('研发实践',True,None),('2022-08 — 2025-11',False,None)]
+        paragraphs=[
+            '围绕用户需求梳理业务流程，设计页面交互和服务接口，整理开发说明与使用手册。通过自动化测试验证数据处理结果，记录异常情况并跟踪修复，在迭代中持续改进功能与体验。',
+            '参与模块开发与联调，使用 Data Tools 完成数据分析与质量检查。与团队共同制定交付计划，跟踪问题清单、审核测试结果，保持沟通记录和变更说明，确保文档、配置及运行结果一致。',
+            '对比多种实现方案，整理性能指标与验证记录。根据评审意见调整系统结构，补充边界条件和失败恢复策略，通过回归测试确认修改效果，同时持续维护部署说明和日常检查流程。',
+            '结合任务目标编写测试案例，核对计算结果与页面展示，分析数据差异并记录处理过程。独立完成常用工具脚本，减少重复操作，支持协作人员快速复现问题并确认解决结果。']
+        for i in range(12):
+            if i==6:records.append(('工具与方法',True,None))
+            prefix=['能力说明：','协作方式：','质量实践：'][i%3] if i%3==0 else ''
+            text=prefix+paragraphs[i%4]
+            records.append((text,False,(0,len(prefix)) if prefix else None))
     rows=[]
     for i,(text,bold,span) in enumerate(records):
         content=html.escape(text)
         if span:
             a,b=span;content=html.escape(text[:a])+'<b>'+html.escape(text[a:b])+'</b>'+html.escape(text[b:])
-        heading=i in (0,4)
+        heading=(text in ('研发实践','工具与方法')) if dense else i in (0,4)
         rows.append(f'<div class="row {"heading" if heading else ""}" data-key="{i}" data-bold="{str(bold).lower()}" data-span="{json.dumps(span)}" style="font-weight:{700 if bold else 400}">{content}</div>')
     return f'''<!doctype html><meta charset="utf-8"><style>
     *{{box-sizing:border-box}}body{{margin:0;background:white;font-family:{family};color:#333333}}
     main{{width:1000px;min-height:900px;padding:40px}}
-    .row{{font-size:26px;line-height:1.4;margin-bottom:28px;white-space:nowrap}}
+    .row{{font-size:{18 if dense else 26}px;line-height:{1.5 if dense else 1.4};margin-bottom:{12 if dense else 28}px;white-space:{'normal' if dense else 'nowrap'}}}
     .heading{{background:{fill};position:relative;padding:8px 20px;height:54px}}
     .heading:before{{content:'';position:absolute;left:0;top:0;width:14px;height:54px;border-left:5px solid #6397cf;border-radius:14px 0 0 14px}}
     </style><main>{''.join(rows)}</main>'''
@@ -52,7 +64,12 @@ def compare(elements,truth,factor):
         text=target['text'];expected=[target['bold']]*len(text)
         if target['span']:
             a,b=target['span'];expected[a:b]=[True]*(b-a)
-        candidates=sorted([e for e in elements if e.type=='text' and target['y']*factor-3<=e.y+e.height/2<=(target['y']+target['height'])*factor+3],key=lambda e:e.x)
+        candidates=sorted([e for e in elements if e.type=='text' and target['y']*factor-3<=e.y+e.height/2<=(target['y']+target['height'])*factor+3],key=lambda e:e.y)
+        lines=[]
+        for element in candidates:
+            if lines and abs(element.y-lines[-1][0].y)<=3*factor:lines[-1].append(element)
+            else:lines.append([element])
+        candidates=[e for line in lines for e in sorted(line,key=lambda e:e.x)]
         observed=''.join(e.text for e in candidates);weights=[]
         for e in candidates:
             weights.extend(next((r.fontWeight>=600 for r in e.textRuns if r.start<=i<r.end),e.style.fontWeight>=600) for i in range(len(e.text)))
@@ -66,17 +83,17 @@ def compare(elements,truth,factor):
                 correct+=want==got;aligned+=1;row_correct+=want==got;row_total+=1
         total+=sum(not c.isspace() for c in text)
         rows.append({'text':text,'observed':observed,'styleAccuracy':row_correct/max(1,row_total),'weights':[e.style.fontWeight for e in candidates], 'runs':[[r.model_dump() for r in e.textRuns] for e in candidates]})
-    return {'characterCoverage':aligned/max(1,total),'weightAccuracy':correct/max(1,aligned),
+    return {'characterCoverage':aligned/max(1,total),'weightAccuracy':correct/max(1,aligned),'falseBoldRate':fp/max(1,aligned-tp-fn),
             'boldPrecision':tp/max(1,tp+fp),'boldRecall':tp/max(1,tp+fn),'rows':rows}
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--raw',action='store_true');parser.add_argument('--filter',default='');args=parser.parse_args()
-    output=ROOT/'artifacts/style-fidelity/corpus';output.mkdir(parents=True,exist_ok=True)
+    parser=argparse.ArgumentParser();parser.add_argument('--raw',action='store_true');parser.add_argument('--filter',default='');parser.add_argument('--dense',action='store_true');args=parser.parse_args()
+    output=ROOT/('artifacts/typography-20261015/dense' if args.dense else 'artifacts/style-fidelity/corpus');output.mkdir(parents=True,exist_ok=True)
     fixtures=[]
     with sync_playwright() as pw:
         browser=launch_browser(pw);tab=browser.new_page(viewport={'width':1000,'height':900})
-        for key,family,fill in THEMES:
-            tab.set_content(fixture(family,fill));tab.evaluate('async()=>await document.fonts.ready')
+        for key,family,fill in (THEMES[:2] if args.dense else THEMES):
+            tab.set_content(fixture(family,fill,args.dense));tab.evaluate('async()=>await document.fonts.ready')
             truth=tab.locator('[data-key]').evaluate_all('els=>els.map(e=>{const b=e.getBoundingClientRect();return {text:e.textContent,x:b.x,y:b.y,width:b.width,height:b.height,heading:e.classList.contains("heading"),bold:e.dataset.bold==="true",span:JSON.parse(e.dataset.span)}})')
             raw=tab.screenshot(full_page=True)
             for scale,kind in [(1,'png'),(.72,'jpeg')]:

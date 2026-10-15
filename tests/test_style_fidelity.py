@@ -101,3 +101,65 @@ def test_browser_face_refinement_failure_retains_ocr_and_editable_text(monkeypat
     elements=ocr.recognize(Image.new('RGB',(220,70),'white'),595,1)
     assert len(elements)==1 and elements[0].text=='Retain editable text'
     assert elements[0].sourceRegion.confidence==.99
+
+
+def test_uncertain_font_does_not_invent_bold_when_browser_refinement_is_unavailable(monkeypatch):
+    from backend.image_layout import infer_runs
+    text='普通正文需要保持正常字重'
+    words=[(ch,.99,[[i*20,0],[i*20+18,0],[i*20+18,22],[i*20,22]]) for i,ch in enumerate(text)]
+    info={'chinese':{'scores':[.84,.83,.8,.81]},'latin':{'scores':[]}}
+    def should_not_match(*args,**kwargs):raise AssertionError('Uncertain font must not infer bold ranges')
+    monkeypatch.setattr('backend.typography._match',should_not_match)
+    assert infer_runs(np.full((40,400,3),255,dtype=np.uint8),text,words,FONT_CHOICES[0],20,np.array([255]*3),None,info)==[]
+
+
+def test_dense_page_keeps_browser_refinement_with_bounded_references(monkeypatch):
+    import base64
+    from contextlib import nullcontext
+    from backend.browser_typography import refine_typography
+    rows=[];analyses=[];calls=[]
+    for row_index in range(12):
+        text=''.join(chr(0x4e00+row_index*100+i) for i in range(100))
+        words=[(ch,.99,[[i*20,0],[i*20+18,0],[i*20+18,22],[i*20,22]]) for i,ch in enumerate(text)]
+        rows.append((np.array([[0,0],[2000,0],[2000,22],[0,22]]),text,.99,words))
+        analyses.append((FONT_CHOICES[0],20,400,(np.zeros((22,2000),bool),np.array([255]*3),(0,0,2000,22)),{}))
+    class Tab:
+        def route(self,*args):pass
+        def evaluate(self,script,requests):
+            calls.append(len(requests));return [[3,3,base64.b64encode(bytes([255]*9)).decode()]]*len(requests)
+    class Browser:
+        def new_page(self):return Tab()
+        def close(self):pass
+    monkeypatch.setattr('playwright.sync_api.sync_playwright',lambda:nullcontext(None))
+    monkeypatch.setattr('backend.browser.launch_browser',lambda _:Browser())
+    monkeypatch.setattr('backend.browser_typography.match_typography',lambda *args,**kwargs:analyses[0])
+    monkeypatch.setattr('backend.browser_typography.smooth_typography',lambda values,**kwargs:values)
+    refined,provider=refine_typography(np.full((40,2100,3),255,np.uint8),rows,analyses)
+    assert refined is not None and len(refined)==12 and provider is not None
+    assert len(calls)==2 and max(calls)<100000
+    assert provider(rows[-1][1][-1],FONT_CHOICES[0],False,20) is not None
+    assert provider('Z',FONT_CHOICES[0],False,90) is None
+
+
+@pytest.mark.parametrize('has_space',[False,True])
+def test_pixel_word_spacing_when_ocr_character_boxes_touch(has_space):
+    from backend.typography import restore_spaces
+    font=load_font('arial.ttf',28)
+    if font is None:pytest.skip('System fonts unavailable')
+    image=Image.new('RGB',(500,100),'white');draw=ImageDraw.Draw(image)
+    text='WebSearch';words=[];positions=[];x=30
+    for i,ch in enumerate(text):
+        if i==3 and has_space:x+=font.getlength(' ')
+        positions.append(x);draw.text((x,30),ch,font=font,fill='#222222',anchor='lt');x+=font.getlength(ch)
+    positions.append(x)
+    for i,ch in enumerate(text):
+        left,right=positions[i],positions[i+1]
+        words.append((ch,.99,[[left,25],[right,25],[right,64],[left,64]]))
+    assert restore_spaces(text,words,np.asarray(image),FONT_CHOICES[0],28)==('Web Search' if has_space else 'WebSearch')
+
+
+def test_numeric_labels_do_not_invent_mixed_weight(monkeypatch):
+    from backend.image_layout import infer_runs
+    def should_not_match(*args,**kwargs):raise AssertionError('Use the token face for numeric labels')
+    monkeypatch.setattr('backend.typography._match',should_not_match)
+    assert infer_runs(np.full((40,300,3),255,np.uint8),'2022/08 - 2025/11',[],FONT_CHOICES[0],22,np.array([255]*3))==[]
