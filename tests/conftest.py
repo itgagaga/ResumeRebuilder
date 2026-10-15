@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def isolated_storage(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "DATA", tmp_path / "projects")
     monkeypatch.setenv("RESUME_DATA_DIR", str(tmp_path / "projects"))
+    monkeypatch.setenv("RESUME_GLYPH_CACHE_DIR", str(tmp_path / "glyph-cache"))
 
 
 @pytest.fixture

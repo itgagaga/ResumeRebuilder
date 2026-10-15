@@ -4,7 +4,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, __version__ as PILLOW_VERSION
 
 from .models import Element, SourceRegion, Style, TextRun
 from .storage import new_id
@@ -186,14 +186,27 @@ def font_file(char, choice, bold):
     return choice[4 if bold else 3] if ord(char) < 128 and len(choice) > 3 else choice[2 if bold else 1]
 
 
-@lru_cache(maxsize=16384)
 def render_glyph(char, font_choice, bold, size=40, antialias=False):
     latin = ord(char) < 128
     filename = font_file(char,font_choice,bold)
     synthetic = bold and font_choice[1] == font_choice[2] and not latin
+    # Other faces in a font stack do not affect this character's pixels. A
+    # larger, canonical cache avoids evicting the same glyph between OCR rows.
+    return _render_glyph(char,filename,synthetic,size,antialias)
+
+
+@lru_cache(maxsize=65536)
+def _render_glyph(char, filename, synthetic, size, antialias):
+    from .glyph_cache import get_cache, MISS
+    cache = get_cache(f'pillow-glyph-v2:{PILLOW_VERSION}:{ImageFont.core.freetype2_version}')
+    key = (char,filename,synthetic,float(size),antialias)
+    cached = cache.get(key)
+    if cached is not MISS:
+        return cached.astype(np.float32)/255 if cached is not None and antialias else cached
     resolution = 4 if antialias and (synthetic or size != round(size)) else 1
     font = load_font(filename, round(size*resolution))
     if font is None:
+        cache.put(key,None)
         return None
     stroke = max(1,round(size*resolution/(96 if antialias else 48))) if synthetic else 0
     canvas = Image.new("L", (round(size*3*resolution),round(size*3*resolution)))
@@ -202,9 +215,14 @@ def render_glyph(char, font_choice, bold, size=40, antialias=False):
         canvas=canvas.resize((round(size*3),round(size*3)),Image.Resampling.LANCZOS)
     box = canvas.getbbox()
     if not box:
+        cache.put(key,None)
         return None
     pixels = np.asarray(canvas.crop(box))
-    return pixels.astype(np.float32)/255 if antialias else pixels > 90
+    result = pixels.astype(np.float32)/255 if antialias else pixels > 90
+    # Persist the original 8-bit alpha, then apply the same float conversion on
+    # a cache hit. This is lossless and avoids storing four bytes per pixel.
+    cache.put(key,pixels if antialias else result)
+    return result
 
 
 def similarity(source, glyph):

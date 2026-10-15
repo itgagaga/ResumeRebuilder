@@ -88,7 +88,8 @@ def _match(rgb,bounds,bg,samples,choices,sizes=None,glyph_provider=None,localize
                         # Include the blank perimeter. Matching a tightly cropped
                         # regular glyph inside a bold glyph otherwise ignores its
                         # extra outer strokes and spuriously favors regular weight.
-                        glyph=np.pad(glyph,((2,2),(0,0) if char.isascii() else (2,2)))
+                        horizontal = 0 if char.isascii() else 2
+                        glyph=cv2.copyMakeBorder(np.asarray(glyph,dtype=np.float32),2,2,horizontal,horizontal,cv2.BORDER_CONSTANT,value=0)
                         if glyph.shape[0] > source.shape[0] or glyph.shape[1] > source.shape[1]:continue
                         values = cv2.matchTemplate(source,glyph.astype(np.float32),cv2.TM_CCOEFF_NORMED)
                         # Do not explain a glyph by matching an unrelated neighbour or sub-stroke.

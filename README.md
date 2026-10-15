@@ -77,8 +77,11 @@ python stop.py --check
 - 导出工程包可取消原始参考。工程包包含当前 JSON 与已引用的新图片；重新导入会分配新工程 ID。
 - 文件上限 25MB，图片上限 3000 万像素，最多 20 页；项目包解压总量上限 100MB。路径穿越、重复路径、非法文件、非法资源和颜色/字体注入会被拒绝。
 - 源文件解析在独立进程执行，超时 180 秒；错误导入不会覆盖已有工程。数据目录可通过 `RESUME_DATA_DIR` 配置，浏览器路径可通过 `RESUME_BROWSER_PATH` 配置。
+- `runtime/glyph-cache/` 缓存系统字体生成的单字参考，不保存简历原文、位置、照片或源图裁片，不进入工程包或成品。缓存按字体文件状态、Pillow/FreeType 版本、浏览器版本及绘制代码隔离；损坏或不可写时重新计算，容量受限。可用 `RESUME_GLYPH_CACHE_DIR` 调整目录，`RESUME_GLYPH_CACHE=0` 禁用磁盘缓存。
 
 ## 当前边界
+
+图片导入已增加无损字形缓存与重复计算复用，保留字体候选、字号搜索及粗体判定规则。本机同一张 1080×1515、58 行图片实测：优化前 71.8 秒，全新缓存首次 67.4 秒，跨进程命中缓存后 22.5 秒；文字、字体、字号、局部粗体、坐标和图形数据与优化前一致。首次处理新字形仍较慢，其他模板耗时取决于文字量和缓存命中率。
 
 长页字体匹配先用代表字形判断字体，再只为选中的字体生成完整字符参考，避免密集简历触发预算后整体失去精匹配。缺失参考不混用其他栅格器，回退也执行同样的局部粗体置信度检查。数字标签按整块字重恢复，不自动猜测数字内部的混合粗体；英文字间空白可用完整字形的像素间隙辅助恢复，字母残片不作为空格依据。该修复减少误加粗，仍会漏掉部分真实局部粗体。
 
@@ -132,6 +135,8 @@ npm run build
 独立文件验收运行 `.\.venv\Scripts\python.exe scripts/verify_standalone_html.py`，由隔离 API 导出后直接打开 `file://` 文件，不启动任何 HTTP 服务，验证文字、粗体、增减高度、换行/空行/空文字、中文输入法、纯文本粘贴、换图、两轮下载保存与重开、Ctrl+S 和无工具栏的两页 PDF。长内容打印验证末尾文字仍存在；没有外部网络请求。产物及虚构的 `可编辑简历示例.html` 位于 `artifacts/standalone-html/`。
 
 泛化质量验收运行 `.\.venv\Scripts\python.exe scripts/verify_generalization.py --baseline --holdout`。它用浏览器生成独立的多字体、单栏/双栏、不同字号与缩放/JPEG 图片，以 DOM 真值比较文字、字体候选、字号、位置和初始溢出；`--baseline` 在内存加载 Git HEAD 的旧实现做对比，不切换代码或修改工程。报告位于 `artifacts/generalization/corpus/report.json`，逐项保留通过和失败。完整门槛为：忽略空白后的字符准确率至少 90%、字体候选命中率至少 65%、字号误差中位数不超过 12%、归一化位置误差均值不超过 1.5%，并且没有漏块和初始溢出；任一未达到时脚本返回失败，不把已生成页面当作质量通过。真实图片验收可使用 `scripts/verify_image_layout.py 图片路径 --output artifacts/独立验收目录`，生成私有对照、当前模型、可独立编辑 HTML、PDF 和质量摘要。
+
+无损字形专项运行 `.\.venv\Scripts\python.exe scripts/verify_glyph_equivalence.py --baseline-ref 优化前提交`，比较 4032 组 Pillow 字形在冷/热缓存下的原始像素及 3024 组浏览器字形；基线默认 `HEAD`，也可指定优化前提交。报告在 `artifacts/glyph-equivalence/`，缓存损坏、环境失效与容量边界另有后端回归。
 
 只读工作流验收运行 `.\.venv\Scripts\python.exe scripts/verify_preview_workflow.py`，覆盖点击/双击/拖动/快捷键防修改、缩放翻页、原页对照、工程重命名与参考图删除、HTML 独立保存、弹窗失败和桌面/窄屏布局；产物位于 `artifacts/preview-workflow/`。
 

@@ -1,5 +1,6 @@
 """Match system-font faces against the rasterizer that also renders the editable HTML."""
 import base64
+import hashlib
 import numpy as np
 import cv2
 
@@ -43,16 +44,30 @@ def refine_typography(rgb,rows,analyses):
     # the normal local estimator; it must never prevent text from being imported.
     if not requests or len(requests)>100000:return None,None
     glyphs={}
+    rasterized={}
+    cache=None
     def collect(tab,requests):
         keys=list(requests)
         if not keys:return
-        values=tab.evaluate(RENDER_GLYPHS,list(requests.values()))
-        for key,value in zip(keys,values):
-            if not value:continue
+        # The rasterizer only sees the effective pixel size. For example,
+        # 20px at 1.5x and 30px at 1x produce exactly the same source bitmap.
+        identities={key:(family,char,weight,size*resolution) for key,(family,char,weight,size,resolution) in requests.items()}
+        missing=dict.fromkeys(identity for identity in identities.values() if identity not in rasterized)
+        if cache is not None:
+            rasterized.update(cache.get_many(missing))
+            missing={identity:None for identity in missing if identity not in rasterized}
+        if missing:
+            values=tab.evaluate(RENDER_GLYPHS,[[*identity,1] for identity in missing])
+            decoded={identity:np.frombuffer(base64.b64decode(value[2]),dtype=np.uint8).reshape(value[1],value[0]) if value else None for identity,value in zip(missing,values)}
+            rasterized.update(decoded)
+            if cache is not None:cache.put_many(decoded)
+        for key in keys:
+            value=rasterized[identities[key]]
+            if value is None:continue
             resolution=key[-1]
-            glyph=np.frombuffer(base64.b64decode(value[2]),dtype=np.uint8).reshape(value[1],value[0]).astype(np.float32)/255
+            glyph=value.astype(np.float32)/255
             if resolution!=1:
-                glyph=cv2.resize(glyph,(max(1,round(value[0]/resolution)),max(1,round(value[1]/resolution))),interpolation=cv2.INTER_AREA)
+                glyph=cv2.resize(glyph,(max(1,round(value.shape[1]/resolution)),max(1,round(value.shape[0]/resolution))),interpolation=cv2.INTER_AREA)
             glyphs.setdefault(key[:-1],[]).append(glyph)
     def provider(char,choice,bold,size,antialias=True):
         glyph=glyphs.get((font_file(char,choice,bold),char,bold,round(float(size)*2)/2))
@@ -62,6 +77,10 @@ def refine_typography(rgb,rows,analyses):
     with sync_playwright() as pw:
         browser=launch_browser(pw)
         try:
+            version=getattr(browser,'version',None)
+            if isinstance(version,str):
+                from .glyph_cache import get_cache
+                cache=get_cache(f'canvas-glyph:{version}:{hashlib.sha256(RENDER_GLYPHS.encode()).hexdigest()}')
             tab=browser.new_page();tab.route('**/*',lambda route:route.abort())
             collect(tab,requests)
             refined=[match_typography(rgb,row[1],row[0],row[3],glyph_provider=provider,sizes=sizes) for row,sizes in zip(rows,sizes_by_row)]
@@ -87,20 +106,32 @@ def refine_typography(rgb,rows,analyses):
 
 
 RENDER_GLYPHS='''requests=>{
-              const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
-              return requests.map(([family,char,weight,size,resolution])=>{
-                size*=resolution;
-                const font=weight+' '+size+'px "'+family+'"';ctx.font=font;
-                const metrics=ctx.measureText(char);
-                const width=Math.max(1,Math.ceil(metrics.actualBoundingBoxLeft)+Math.ceil(metrics.actualBoundingBoxRight)+4);
-                const height=Math.max(1,Math.ceil(metrics.actualBoundingBoxAscent)+Math.ceil(metrics.actualBoundingBoxDescent)+4);
-                canvas.width=width;canvas.height=height;ctx.font=font;ctx.textBaseline='alphabetic';
-                ctx.fillText(char,2+Math.ceil(metrics.actualBoundingBoxLeft),2+Math.ceil(metrics.actualBoundingBoxAscent));
-                const data=ctx.getImageData(0,0,width,height).data;
-                let left=width,top=height,right=0,bottom=0;
-                for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(data[(y*width+x)*4+3]>2){left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x+1);bottom=Math.max(bottom,y+1)}
-                if(right<=left)return null;
-                let bytes='';for(let y=top;y<bottom;y++)for(let x=left;x<right;x++)bytes+=String.fromCharCode(data[(y*width+x)*4+3]);
-                return [right-left,bottom-top,btoa(bytes)];
-              });
-            }'''
+  const measuring=document.createElement('canvas').getContext('2d',{willReadFrequently:true});
+  const surfaces=new Map();
+  return requests.map(([family,char,weight,size,resolution])=>{
+    size*=resolution;
+    const font=weight+' '+size+'px "'+family+'"';measuring.font=font;
+    const metrics=measuring.measureText(char);
+    const width=Math.max(1,Math.ceil(metrics.actualBoundingBoxLeft)+Math.ceil(metrics.actualBoundingBoxRight)+4);
+    const height=Math.max(1,Math.ceil(metrics.actualBoundingBoxAscent)+Math.ceil(metrics.actualBoundingBoxDescent)+4);
+    const key=width+'x'+height;
+    let ctx=surfaces.get(key);
+    if(!ctx){
+      const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+      ctx=canvas.getContext('2d',{willReadFrequently:true});surfaces.set(key,ctx);
+      if(surfaces.size>128)surfaces.delete(surfaces.keys().next().value);
+    }
+    ctx.clearRect(0,0,width,height);ctx.font=font;ctx.textBaseline='alphabetic';
+    ctx.fillText(char,2+Math.ceil(metrics.actualBoundingBoxLeft),2+Math.ceil(metrics.actualBoundingBoxAscent));
+    const data=ctx.getImageData(0,0,width,height).data;
+    let left=width,top=height,right=0,bottom=0;
+    for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(data[(y*width+x)*4+3]>2){
+      if(x<left)left=x;if(y<top)top=y;if(x+1>right)right=x+1;if(y+1>bottom)bottom=y+1;
+    }
+    if(right<=left)return null;
+    const alpha=new Uint8Array((right-left)*(bottom-top));let index=0;
+    for(let y=top;y<bottom;y++)for(let x=left;x<right;x++)alpha[index++]=data[(y*width+x)*4+3];
+    let bytes='';for(let i=0;i<alpha.length;i+=8192)bytes+=String.fromCharCode(...alpha.subarray(i,i+8192));
+    return [right-left,bottom-top,btoa(bytes)];
+  });
+}'''
