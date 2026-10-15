@@ -11,6 +11,7 @@ body { font-family: "Microsoft YaHei", Arial, sans-serif; color: #273b34; }
 .page { box-shadow: 0 4px 24px #0002; }
 [data-resume-text] { outline: none; cursor: text; caret-color: #315e4a; padding: 0; margin: 0; }
 [data-resume-text]:focus { outline: 2px solid #4e8c6666; outline-offset: 2px; }
+body.resume-font-brushing [data-resume-text] { cursor: crosshair; }
 [data-kind="image_placeholder"] { cursor: pointer; }
 [data-kind="image_placeholder"]:hover, [data-kind="image_placeholder"][data-active-image] { outline: 2px dashed #6e9a7d; outline-offset: 2px; }
 [data-kind="image_placeholder"]:not(:has(img))::after { content: "点击更换图片"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #658575; background: #edf4ef; }

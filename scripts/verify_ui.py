@@ -27,6 +27,7 @@ def main():
         page.screenshot(path=output/"welcome.png",full_page=True)
         page.get_by_role("button",name="体验示例").click()
         expect(page.get_by_label("工程名称")).to_be_visible(timeout=60000)
+        page.get_by_role("button",name="高级调整",exact=True).click()
         page.get_by_role("button",name="版式调整",exact=True).click()
         expect(page.locator('[data-text-id]').filter(has_text="张三")).to_have_count(1)
         expect(page.locator(".photo-empty")).to_have_count(1)
@@ -77,6 +78,7 @@ def main():
         page.locator('input[type=file]').nth(0).set_input_files(project_path)
         expect(page.locator('[data-text-id]').filter(has_text="李四")).to_have_count(1,timeout=30000)
         expect(page.locator('img[alt="用户上传的图片"]')).to_have_count(1)
+        page.get_by_role("button",name="高级调整",exact=True).click()
         # Create a manual photo region on the original page; existing text must remain.
         before = page.locator('[data-text-id]').count()
         page.get_by_role("button",name="框选图片区",exact=True).click()

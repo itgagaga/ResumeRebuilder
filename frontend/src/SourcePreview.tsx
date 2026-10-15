@@ -14,7 +14,7 @@ export default function SourcePreview({ project, pageIndex, zoom, drawingMode, c
     if (w > 4 && h > 4) { const next = structuredClone(project), e = createElement('image_placeholder', Math.min(p.x,origin.x), Math.min(p.y,origin.y), w, h); e.shape = circle ? 'circle' : 'rect'; e.sourceRegion = { detectedFrom: 'manual-region', page: pageIndex+1, confidence: null }; e.zIndex = Math.max(1, ...page.elements.map(e => e.zIndex))+1; next.pages[pageIndex].elements.push(e); add(next, e.id) }
     start.current = null; setRegion(null); if (root.current!.hasPointerCapture(event.pointerId)) root.current!.releasePointerCapture(event.pointerId)
   }} onPointerCancel={() => { start.current = null; setRegion(null) }}>
-    {project.referenceAvailable ? <img draggable={false} src={`/api/projects/${project.projectId}/reference/${pageIndex+1}`} alt={`原始参考第 ${pageIndex+1} 页`} /> : <div className="no-source"><ScanLine size={32}/><h3>暂无原始参考</h3><p>导入 PDF 或图片即可开始对照重建。<br/>也可以直接在右侧创建简历。</p></div>}
+    {project.referenceAvailable ? <img draggable={false} src={`/api/projects/${project.projectId}/reference/${pageIndex+1}`} alt={`原始参考第 ${pageIndex+1} 页`} /> : <div className="no-source"><ScanLine size={32}/><h3>暂无原始参考</h3><p>导入 PDF 或图片即可开始对照重建。<br/>空白工程可先通过“高级调整”添加文字或图片区。</p></div>}
     {region && <div className="source-region" style={{ left: region.x*scale, top: region.y*scale, width: region.width*scale, height: region.height*scale, borderRadius: circle ? '50%' : 0 }}><span>新图片占位区域</span></div>}
   </div>
 }

@@ -53,6 +53,7 @@ def main():
         tab.get_by_role("button",name=project.name).click()
         expect(tab.get_by_label("工程名称")).to_be_visible()
         # Retain regression coverage for the original double-click layout workflow.
+        tab.get_by_role("button",name="高级调整",exact=True).click()
         tab.get_by_role("button",name="版式调整",exact=True).click()
         target = tab.locator(f'[data-element-id="{selected.id}"]')
         target.dblclick()

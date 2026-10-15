@@ -71,6 +71,8 @@ def main():
         tab.route("**/*", handler)
         tab.goto("http://127.0.0.1:8765/")
         tab.get_by_role("button",name=original["name"]).click()
+        tab.get_by_role("button",name="高级调整",exact=True).click()
+        tab.get_by_role("button",name="内容编辑",exact=True).click()
         content = tab.get_by_role("button",name="内容编辑",exact=True)
         expect(content).to_have_attribute("aria-pressed","true")
         expect(tab.locator('[data-element-id="name"]')).to_have_class(__import__('re').compile('is-uncertain'))
@@ -186,6 +188,7 @@ def main():
         tab.screenshot(path=output/"document-editor.png",full_page=True)
         tab.reload();tab.get_by_role("button",name=original["name"]).click()
         expect(tab.locator('[data-element-id="line1"]')).to_contain_text("最终段落")
+        tab.get_by_role("button",name="高级调整",exact=True).click()
         # Responsive toolbar remains operable without overflowing the viewport.
         tab.set_viewport_size({"width":1050,"height":850})
         assert tab.locator('.editing-toolbar').evaluate("el=>el.scrollWidth<=el.clientWidth")

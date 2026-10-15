@@ -104,6 +104,8 @@ def main():
             def open_editor():
                 tab.goto('http://127.0.0.1:8765/')
                 tab.locator('.recent-grid button').first.click()
+                tab.get_by_role('button',name='高级调整',exact=True).click()
+                tab.get_by_role('button',name='内容编辑',exact=True).click()
                 tab.locator('[data-text-id]').first.wait_for()
                 tab.evaluate('async()=>await document.fonts.ready')
             saved[:]=[original];open_editor()

@@ -4,9 +4,12 @@
   const $ = selector => document.querySelector(selector);
   const hint = $('#resume-hint'), picker = $('#resume-photo-file');
   const bold = $('#resume-bold'), layout = $('#resume-layout');
+  const fontBrush = $('#resume-font-brush');
   const pages = [...document.querySelectorAll('.page')];
   const initialHint = '点击文字即可修改；点击图片可更换。保存会下载包含修改的新 HTML 文件，无需启动本地服务。';
   let dirty = false, activeText = null, activeImage = null, pendingImage = null;
+  let brushFont = null, brushLocked = false;
+  const fontProperties = ['fontFamily','fontSize','fontWeight','fontStyle','color'];
   const composing = new WeakSet();
   const editableAt = node => (node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement)?.closest('[data-resume-text]');
   const elements = page => [...page.querySelectorAll('[data-resume-element]')];
@@ -71,17 +74,17 @@
     }
     refreshPages();
   }
-  // Normalize browser-created div/br/b tags into current text and weight ranges.
+  // Normalize browser-created markup, retaining only current text and font styles.
   // The saved file contains no second copy of a previous resume or application model.
   function currentContent(root) {
-    const base = number(getComputedStyle(root).fontWeight) || 400, segments = [];
+    const base = getComputedStyle(root), segments = [];
     let text = '';
-    const append = (value, weight = base) => {
+    const append = (value, style = base) => {
       value = value.replaceAll('\u00a0',' '); text += value;
-      if (value) segments.push({ value, weight });
+      if (value) segments.push({ value, font:Object.fromEntries(fontProperties.map(key => [key,style[key]])) });
     };
     const walk = node => {
-      if (node.nodeType === Node.TEXT_NODE) append(node.textContent,number(getComputedStyle(node.parentElement).fontWeight) || base);
+      if (node.nodeType === Node.TEXT_NODE) append(node.textContent,getComputedStyle(node.parentElement));
       else if (node instanceof HTMLElement) {
         if (node.tagName === 'BR') {
           if (!(node.parentElement !== root && node.parentElement?.childNodes.length === 1)) append('\n');
@@ -96,8 +99,13 @@
     root.childNodes.forEach(walk);
     const fragment = document.createDocumentFragment();
     for (const part of segments) {
-      if (part.weight === base) fragment.append(document.createTextNode(part.value));
-      else { const span = document.createElement('span'); span.style.fontWeight = String(part.weight); span.textContent = part.value; fragment.append(span); }
+      const differences = fontProperties.filter(key => part.font[key] !== base[key]);
+      if (!differences.length) fragment.append(document.createTextNode(part.value));
+      else {
+        const span = document.createElement('span');
+        for (const key of differences) span.style[key] = part.font[key];
+        span.textContent = part.value; fragment.append(span);
+      }
     }
     return fragment;
   }
@@ -147,6 +155,62 @@
   }
   bold.addEventListener('mousedown', event => event.preventDefault());
   bold.addEventListener('click',toggleBold);
+  function stopBrush(message) {
+    brushFont = null; brushLocked = false;
+    fontBrush.setAttribute('aria-pressed','false');
+    document.body.classList.remove('resume-font-brushing');
+    if (message) hint.textContent = message;
+  }
+  function brushHint() {
+    hint.textContent = brushLocked ? '连续格式刷已开启：拖选目标文字应用字体；按 Esc 或再次点击格式刷退出。' : '字体已复制：拖选目标文字应用一次；双击格式刷可连续使用，Esc 取消。';
+  }
+  fontBrush.addEventListener('mousedown', event => event.preventDefault());
+  fontBrush.addEventListener('click', event => {
+    if (brushFont) {
+      if (event.detail > 1) { brushLocked = true; brushHint(); }
+      else stopBrush('已取消格式刷。');
+      return;
+    }
+    const selection = window.getSelection(), editor = editableAt(selection?.anchorNode);
+    if (!selection?.rangeCount || !editor || editableAt(selection.focusNode) !== editor || composing.has(editor)) {
+      hint.textContent = '请先选中源文字（或将光标放入源文字），再点击格式刷。'; return;
+    }
+    const range = selection.getRangeAt(0), walker = document.createTreeWalker(editor,NodeFilter.SHOW_TEXT);
+    let sample = range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer : null;
+    if (!selection.isCollapsed) {
+      sample = null;
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.length && range.intersectsNode(node) && !(node === range.startContainer && range.startOffset === node.length) && !(node === range.endContainer && range.endOffset === 0)) { sample = node; break; }
+      }
+    }
+    const style = getComputedStyle(sample?.parentElement || editor);
+    brushFont = Object.fromEntries(fontProperties.map(key => [key,style[key]]));
+    // Editor font sizes are enlarged internally to avoid browser minimum fonts.
+    // Capture the visible size and convert it to the target editor's zoom below.
+    brushFont.fontSize = number(style.fontSize)*(number(getComputedStyle(editor).zoom) || 1);
+    brushLocked = event.detail > 1;
+    fontBrush.setAttribute('aria-pressed','true'); document.body.classList.add('resume-font-brushing'); brushHint();
+  });
+  function paintFont() {
+    if (!brushFont) return;
+    const selection = window.getSelection(), editor = editableAt(selection?.anchorNode);
+    if (!selection?.rangeCount || selection.isCollapsed || !editor || editableAt(selection.focusNode) !== editor || composing.has(editor)) return;
+    const range = selection.getRangeAt(0), wrapper = document.createElement('span');
+    Object.assign(wrapper.style,brushFont,{ fontSize:(brushFont.fontSize/(number(getComputedStyle(editor).zoom) || 1))+'px' });
+    wrapper.append(range.cloneContents());
+    // Existing bold/italic tags and nested spans must not override the brush.
+    for (const node of wrapper.querySelectorAll('*')) {
+      for (const key of fontProperties) node.style[key] = 'inherit';
+      if (node.tagName === 'FONT') for (const attribute of ['face','size','color']) node.removeAttribute(attribute);
+    }
+    // A native editing command keeps the entire brush action undoable.
+    if (!document.execCommand('insertHTML',false,wrapper.outerHTML)) { hint.textContent = '未能应用字体，请重新选择目标文字后再试。'; return; }
+    reflow(editor); changed();
+    if (brushLocked) brushHint(); else stopBrush('已应用字体格式。可按 Ctrl+Z 撤销；请保存修改后的 HTML。');
+  }
+  document.addEventListener('pointerup', event => { if (editableAt(event.target)) paintFont(); });
+  document.addEventListener('keyup', event => { if (event.shiftKey && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(event.key)) paintFont(); });
   document.addEventListener('selectionchange', () => {
     const selection = window.getSelection();
     bold.setAttribute('aria-pressed',String(!!editableAt(selection?.anchorNode) && document.queryCommandState('bold')));
@@ -197,6 +261,8 @@
     clone.querySelector('#resume-photo-file').value = '';
     clone.querySelector('#resume-layout').disabled = true;
     clone.querySelector('#resume-bold').setAttribute('aria-pressed','false');
+    clone.querySelector('#resume-font-brush').setAttribute('aria-pressed','false');
+    clone.querySelector('body').classList.remove('resume-font-brushing');
     clone.querySelector('#resume-hint').textContent = initialHint;
     const html = '<!doctype html>\n'+clone.outerHTML;
     const url = URL.createObjectURL(new Blob([html],{ type:'text/html;charset=utf-8' }));
@@ -211,7 +277,10 @@
     if (modifier && key === 's') { event.preventDefault(); void saveFile(); }
     else if (modifier && key === 'b' && editableAt(event.target)) { event.preventDefault(); document.execCommand('bold'); }
     else if (modifier && ['i','u'].includes(key) && editableAt(event.target)) event.preventDefault();
-    else if (event.key === 'Escape' && editableAt(event.target)) event.target.blur();
+    else if (event.key === 'Escape') {
+      if (brushFont) { event.preventDefault(); stopBrush('已取消格式刷。'); }
+      else if (editableAt(event.target)) event.target.blur();
+    }
   });
   window.addEventListener('beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
   window.addEventListener('beforeprint',refreshPages);

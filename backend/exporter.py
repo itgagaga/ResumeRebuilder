@@ -85,6 +85,7 @@ def render_html(project, *, editable=False):
         editor_ui = ('<nav class="resume-toolbar" aria-label="简历编辑工具" data-editor-ui>'
                      '<button type="button" id="resume-save">保存修改后的 HTML</button>'
                      '<button type="button" id="resume-bold" aria-pressed="false" title="选中文字后点击，也可按 Ctrl+B"><b>B</b> 加粗 / 取消加粗</button>'
+                     '<button type="button" id="resume-font-brush" aria-pressed="false" title="先选源文字，单击刷一次，双击连续刷；Esc 取消">格式刷（字体）</button>'
                      '<button type="button" id="resume-photo">更换图片</button>'
                      '<button type="button" id="resume-print">打印 / 导出 PDF</button>'
                      '<label>文字排版 <select id="resume-layout" aria-label="文字排版" disabled>'

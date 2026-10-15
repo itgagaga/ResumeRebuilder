@@ -87,6 +87,7 @@ def main():
         editor.screenshot(path=output/"editor.png",full_page=True)
         rich = next((e for e in page.elements if e.textRuns),None)
         if rich:
+            editor.get_by_role("button",name="高级调整",exact=True).click()
             editor.locator(f'[data-element-id="{rich.id}"]').click()
             editor.get_by_label("文字内容").fill("测试替换文字")
             editor.get_by_role("button",name="保存",exact=True).click()
@@ -96,7 +97,7 @@ def main():
         # The primary HTML action must open the current saved content and retain
         # geometry in an independent editor, including normalized contours.
         with editor.expect_popup() as opened:
-            editor.get_by_role('button',name='打开 HTML 编辑',exact=True).click()
+            editor.get_by_role('button',name='进入 HTML 编辑',exact=True).click()
         standalone = opened.value
         expect(standalone.locator('#resume-save')).to_be_visible()
         expect(standalone.locator('[data-resume-text]')).to_have_count(sum(e.type=='text' for e in page.elements))
