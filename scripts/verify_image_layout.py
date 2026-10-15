@@ -83,17 +83,13 @@ def main():
         expect(editor.get_by_label("工程名称")).to_be_visible()
         editor.evaluate("async()=>await document.fonts.ready")
         editor.wait_for_timeout(200)
-        editor_overflow = editor.locator(".is-overflow").count()
+        editor_overflow = editor.locator('[data-text-id]').evaluate_all("""els=>els.filter(el=>{
+            const cs=getComputedStyle(el),matrix=new DOMMatrixReadOnly(cs.transform),zoom=Number(cs.zoom)||1;
+            return Math.max(el.scrollHeight,el.clientHeight)*zoom*Math.abs(matrix.d)>el.parentElement.clientHeight+2 ||
+                Math.max(el.scrollWidth,el.clientWidth)*zoom*Math.abs(matrix.a)>el.parentElement.clientWidth+2;
+        }).length""")
         editor.screenshot(path=output/"editor.png",full_page=True)
         rich = next((e for e in page.elements if e.textRuns),None)
-        if rich:
-            editor.get_by_role("button",name="高级调整",exact=True).click()
-            editor.locator(f'[data-element-id="{rich.id}"]').click()
-            editor.get_by_label("文字内容").fill("测试替换文字")
-            editor.get_by_role("button",name="保存",exact=True).click()
-            expect(editor.locator(".save-state")).to_contain_text("已保存")
-            updated = next(e for e in saved[-1]["pages"][0]["elements"] if e["id"] == rich.id)
-            assert updated["text"] == "测试替换文字" and all(0 <= r["start"] < r["end"] <= len(updated["text"]) for r in updated["textRuns"])
         # The primary HTML action must open the current saved content and retain
         # geometry in an independent editor, including normalized contours.
         with editor.expect_popup() as opened:
@@ -102,12 +98,19 @@ def main():
         expect(standalone.locator('#resume-save')).to_be_visible()
         expect(standalone.locator('[data-resume-text]')).to_have_count(sum(e.type=='text' for e in page.elements))
         if rich:
-            expect(standalone.locator(f'[data-resume-element="{rich.id}"] [data-resume-text]')).to_have_text('测试替换文字')
+            expect(standalone.locator(f'[data-resume-element="{rich.id}"] [data-resume-text]')).to_have_text(rich.text)
         curves = [e for e in page.elements if e.shape=='polygon']
         for curve in curves:
             assert standalone.locator(f'[data-resume-element="{curve.id}"]').evaluate('el=>getComputedStyle(el).clipPath').startswith('polygon(')
         assert standalone.evaluate('window.opener === null')
         standalone.screenshot(path=output/'standalone.png',full_page=True)
+        if rich:
+            standalone.locator(f'[data-resume-element="{rich.id}"] [data-resume-text]').fill('测试替换文字')
+            with standalone.expect_download() as downloaded:
+                standalone.locator('#resume-save').click()
+            downloaded.value.save_as(output/'edited-in-html.html')
+            assert '测试替换文字' in (output/'edited-in-html.html').read_text(encoding='utf-8')
+            expect(editor.locator(f'[data-text-id="{rich.id}"]')).to_have_text(rich.text)
         standalone.close()
         assert not errors,errors
         assert overflowing == 0 and editor_overflow == 0,(overflowing,editor_overflow)
@@ -120,7 +123,7 @@ def main():
     (output/"quality.json").write_text(json.dumps({'textLines':sum(e.type=='text' for e in page.elements),'shapes':sum(e.type=='rect' for e in page.elements),
         'exportOverflow':overflowing,'editorOverflow':editor_overflow,'sourceAssets':len(project.assets),
         'lowConfidenceLines':sum(e.type=='text' and e.sourceRegion is not None and e.sourceRegion.confidence is not None and e.sourceRegion.confidence<.85 for e in page.elements)},indent=2),encoding='utf-8')
-    print(f"Rebuilt {sum(e.type=='text' for e in page.elements)} text lines, {sum(e.type=='rect' for e in page.elements)} shapes. Export/editor overflowing lines: {overflowing}/{editor_overflow}. Exported source image assets: {len(project.assets)}. React edit/save of local style ranges passed.")
+    print(f"Rebuilt {sum(e.type=='text' for e in page.elements)} text lines, {sum(e.type=='rect' for e in page.elements)} shapes. Export/editor overflowing lines: {overflowing}/{editor_overflow}. Exported source image assets: {len(project.assets)}. Read-only preview and independent HTML edit/save passed.")
     print(f"Private QA artifacts: {output}")
 
 

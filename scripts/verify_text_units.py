@@ -104,8 +104,6 @@ def main():
             def open_editor():
                 tab.goto('http://127.0.0.1:8765/')
                 tab.locator('.recent-grid button').first.click()
-                tab.get_by_role('button',name='高级调整',exact=True).click()
-                tab.get_by_role('button',name='内容编辑',exact=True).click()
                 tab.locator('[data-text-id]').first.wait_for()
                 tab.evaluate('async()=>await document.fonts.ready')
             saved[:]=[original];open_editor()
@@ -120,8 +118,7 @@ def main():
                 assert abs(actual['effectiveFont']-exported['effectiveFont'])<.02,('standalone',minimum,actual,exported)
                 assert abs(actual['width']-actual['frameWidth'])<1,('standalone width',minimum,actual)
             text_elements=[e for e in sorted(project.pages[0].elements,key=lambda e:e.zIndex) if e.type=='text']
-            for mode in ['内容编辑','版式调整']:
-                tab.get_by_role('button',name=mode,exact=True).click()
+            for mode in ['只读预览']:
                 metrics=tab.locator('[data-text-id]').evaluate_all(LINE_METRICS)
                 assert len(metrics)==len(export_metrics)
                 for source,actual,exported in zip(text_elements,metrics,export_metrics):
@@ -134,7 +131,6 @@ def main():
                         assert actual['lines']==1,(minimum,source.id,actual)
                 reports.append({'minimumFontSize':minimum,'mode':mode,'blocks':len(metrics),'lineCounts':[m['lines'] for m in metrics],
                                 'belowMinimumWrapped':[e.id for e,m in zip(text_elements,metrics) if e.height<e.style.fontSize*1.5 and e.style.fontSize*factor<minimum and m['lines']>1]})
-            tab.get_by_role('button',name='内容编辑',exact=True).click()
             if not args.project:
                 # Demonstrate that the old unit conversion produces the reported
                 # symptom with only the minimum font setting changed.
@@ -148,26 +144,15 @@ def main():
                     assert before['lines']==2,before
                     tab.screenshot(path=output/'before-minimum-12.png',full_page=True)
                     saved[:]=[original];open_editor()
-                # Overflow must compare against the owning text frame even when
-                # its editable child grows automatically.
-                expect(tab.locator('[data-element-id="fixed"]')).to_have_class(__import__('re').compile('is-overflow'))
-                paragraph=tab.locator('[data-text-id="paragraph"]')
-                paragraph.fill('持续输入的段落正文，应该正常换行并推开下方内容。'*20)
-                paragraph.press('Escape')
-                tab.get_by_role('button',name='保存',exact=True).click()
-                expect(tab.locator('.save-state')).to_contain_text('已保存')
-                updated=next(e for e in saved[-1]['pages'][0]['elements'] if e['id']=='paragraph')
-                rendered=paragraph.evaluate('el=>el.getBoundingClientRect().height/el.closest(".paper").style.transform.match(/scale\\(([^)]+)/)[1]')
-                assert updated['height']>=rendered-1,(updated['height'],rendered)
-                assert updated['height']>next(e.height for e in project.pages[0].elements if e.id=='paragraph')
-                paragraph.press('Control+z');paragraph.press('Control+y')
-                saved[:]=[original];open_editor()
+                # Fixed-frame overflow is still diagnosed in the read-only status.
+                expect(tab.locator('.status-right')).to_contain_text('文字溢出')
+                assert next(m['lines'] for m in metrics if m['text'].startswith('可编辑段落')) > 1
             tab.screenshot(path=output/f'after-minimum-{minimum}.png',full_page=True)
             browser.close()
     assert not errors,errors
     (output/'report.json').write_text(json.dumps(reports,ensure_ascii=False,indent=2),encoding='utf8')
-    details='Private project read-only.' if args.project else ('Pixel-page paragraph growth and fixed overflow verified.' if args.pixels else 'Old behavior reproduced; paragraph growth and fixed overflow verified.')
-    print(f'Passed {len(reports)} rendering cases: minimum fonts 0/10/12/16/24px, content/layout modes; actual effective font sizes and glyph line counts match export. '+details)
+    details='Private project read-only.' if args.project else ('Pixel-page multiline rendering and fixed overflow verified.' if args.pixels else 'Old behavior reproduced; multiline rendering and fixed overflow verified.')
+    print(f'Passed {len(reports)} rendering cases: minimum fonts 0/10/12/16/24px, read-only preview; actual effective font sizes and glyph line counts match export. '+details)
 
 
 if __name__=='__main__':main()

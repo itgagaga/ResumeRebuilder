@@ -1,4 +1,4 @@
-import type { Project, Asset } from './types'
+import type { Project } from './types'
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, options)
   if (!response.ok) {
@@ -9,7 +9,6 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
 }
 export const save = (project: Project) => request<Project>(`/projects/${project.projectId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(project) })
 export const upload = (file: File) => { const form = new FormData(); form.append('file', file); return request<Project>('/import', { method: 'POST', body: form }) }
-export const uploadAsset = (projectId: string, file: File) => { const form = new FormData(); form.append('file', file); return request<Asset>(`/projects/${projectId}/assets`, { method: 'POST', body: form }) }
 export const assetUrl = (projectId: string, assetId: string) => `/api/projects/${projectId}/assets/${assetId}`
 export async function exportBlob(projectId: string, format: string, includeReference: boolean) {
   const response = await fetch(`/api/projects/${projectId}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format, includeReference, confirmEmpty: true }) })
