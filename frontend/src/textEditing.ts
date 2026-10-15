@@ -1,4 +1,31 @@
 import type { Element, Page } from './types'
+import type { CSSProperties } from 'react'
+
+export const textUnitScale = (page: Page) => page.unit === 'pt' ? 96/72 : 1
+export const textRenderZoom = (element: Element, unitScale: number) => Math.min(1,element.style.fontSize*unitScale/100)
+
+// A large CSS font with layout zoom preserves the intended effective glyph
+// size without triggering browser minimum-font clamping. Unlike transform-only
+// scaling, layout zoom also preserves small-size glyph advance rounding.
+export function textSurfaceStyle(element: Element, unitScale: number): CSSProperties {
+  const zoom = textRenderZoom(element,unitScale)
+  return {
+    display: 'block', fontSize: element.style.fontSize*unitScale/zoom, zoom,
+    lineHeight: element.style.lineHeight, width: `${100*unitScale/element.style.fontScaleX}%`,
+    transform: `scale(${element.style.fontScaleX/unitScale},${1/unitScale})`, transformOrigin: 'left top',
+  }
+}
+
+export function textOverflows(node: HTMLElement): boolean {
+  const container = node.parentElement
+  if (!container) return false
+  const matrix = new DOMMatrixReadOnly(getComputedStyle(node).transform)
+  const zoom = Number(getComputedStyle(node).zoom) || 1
+  // contenteditable grows its own height, so comparing its scrollHeight with
+  // its clientHeight alone misses a wrapped line overlapping the next object.
+  return Math.max(node.scrollHeight,node.clientHeight)*zoom*Math.abs(matrix.d) > container.clientHeight+2 ||
+    Math.max(node.scrollWidth,node.clientWidth)*zoom*Math.abs(matrix.a) > container.clientWidth+2
+}
 
 export function textNodes(element: Element): DocumentFragment {
   const fragment = document.createDocumentFragment(), chars = Array.from(element.text)
@@ -82,9 +109,10 @@ export function layoutText(page: Page, updated: Element): Page {
   const previous = page.elements.find(e => e.id === updated.id)
   let element = { ...updated }, delta = 0
   if (element.type === 'text' && element.textLayout !== 'fixed' && (element.text || element.textLayout === 'paragraph') && Math.abs(element.rotation) < .1) {
-    const measure = document.createElement('div')
+    const measure = document.createElement('div'), unitScale = textUnitScale(page), zoom = textRenderZoom(element,textUnitScale(page))
     Object.assign(measure.style,{ position: 'fixed', left: '-20000px', top: '0', visibility: 'hidden',
-      fontFamily: element.style.fontFamily, fontSize: `${element.style.fontSize}px`, fontWeight: String(element.style.fontWeight),
+      fontFamily: element.style.fontFamily, fontSize: `${element.style.fontSize*unitScale/zoom}px`, zoom: String(zoom), fontWeight: String(element.style.fontWeight),
+      fontSynthesis: 'weight style small-caps',
       fontStyle: element.style.fontStyle, lineHeight: String(element.style.lineHeight), whiteSpace: 'pre',
       overflowWrap: 'break-word', width: 'max-content', padding: '0', margin: '0', border: '0' })
     measure.append(textNodes(element))
@@ -93,13 +121,13 @@ export function layoutText(page: Page, updated: Element): Page {
     document.body.append(measure)
     const horizontalBorder = element.style.borderWidth*2
     if (element.textLayout !== 'wrap' && element.textLayout !== 'paragraph') {
-      const desired = measure.getBoundingClientRect().width*element.style.fontScaleX+horizontalBorder+2
+      const desired = measure.getBoundingClientRect().width/unitScale*element.style.fontScaleX+horizontalBorder+2
       // A rotated or already over-page object remains a manual correction, rather than silently clipped.
       element.width = Math.min(10000,Math.max(Math.min(element.width,availableTextWidth(element,page)),Math.min(desired,availableTextWidth(element,page))))
     }
     measure.style.whiteSpace = 'pre-wrap'
-    measure.style.width = `${Math.max(1,(element.width-horizontalBorder)/element.style.fontScaleX)}px`
-    const measured = measure.getBoundingClientRect().height+horizontalBorder+2
+    measure.style.width = `${Math.max(1,(element.width-horizontalBorder)/element.style.fontScaleX*unitScale/zoom)}px`
+    const measured = measure.getBoundingClientRect().height/unitScale+horizontalBorder+2
     element.height = Math.min(10000,element.textLayout === 'paragraph' ? Math.max(element.style.fontSize*element.style.lineHeight+horizontalBorder+2,measured) : Math.max(element.height,measured))
     measure.remove()
     delta = element.height-(previous?.height || element.height)

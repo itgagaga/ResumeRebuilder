@@ -25,14 +25,10 @@ def calibrate_text_widths(elements,page_width):
                     el.style.transform='none';el.style.width='max-content';el.style.whiteSpace='pre';
                     return el.getBoundingClientRect().width;
                 })""")
-                editor_widths = tab.locator(".page>div>span").evaluate_all("""els=>els.map(el=>{
-                    el.parentElement.style.fontSize=(parseFloat(getComputedStyle(el).fontSize)*.75)+'px';
-                    return el.getBoundingClientRect().width*4/3;
-                })""")
                 if len(widths) != len(elements):
                     return False
-                for element,width,editor_width in zip(elements,widths,editor_widths):
-                    width = max(width,editor_width)
+                # The canvas now shapes glyphs at this same CSS-pixel size.
+                for element,width in zip(elements,widths):
                     if element.sourceRegion and element.sourceRegion.confidence is not None and element.sourceRegion.confidence < .85:
                         element.style.fontScaleX = 1
                     elif width>0:

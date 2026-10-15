@@ -126,6 +126,8 @@ npm run build
 
 页面内编辑验收运行 `.\.venv\Scripts\python.exe scripts/verify_inline_editing.py`，检查追加内容、光标、局部粗体、中文输入法、换行、自动扩展、下方内容顺移、撤销、粘贴、保存重开及 PDF。使用隔离 API，不改动当前工程。
 
+工作台与 HTML/PDF 共用有效字号：文字以至少 100px 的 CSS 字号配合布局缩放显示，保留文档中的原字号和文本框宽度，避免小字被浏览器最小字号抬高后行尾掉字。输入测量、段落重排与溢出检查也计入布局缩放。已有工程刷新页面即可使用，无需重新导入；更新后端后应重新打开或导出独立 HTML，已经下载的旧文件不会自动更新。文字单位专项运行 `.\.venv\Scripts\python.exe scripts/verify_text_units.py`，比较最小字号 0/10/12/16/24px 下内容编辑、版式调整、静态导出与可编辑 HTML 的真实字号、逐字行数及文本框宽度，并检查正常换行和固定框越界；`--pixels` 验证像素单位页面。产物默认在 `artifacts/text-units/`；可用 `--project 工程路径 --output 独立目录` 只读检查私有工程。该检查不代替 OCR 字体、字号和粗体推断质量验收。
+
 内容编辑与段落整理验收运行 `.\.venv\Scripts\python.exe scripts/verify_document_editing.py`，使用合成简历和隔离 API 验证单击光标、真实鼠标拖选、稳定编辑节点、Tab 切换、整理预览/取消、连续碎行与粗体合并、列表边界、重复整理、段落增长/收缩、栏目连带移动、空行/空段落、中文组合输入、纯文本粘贴、版式拖动、保存重开和 HTML/PDF。产物位于忽略版本管理的 `artifacts/document-editing/`。
 
 独立文件验收运行 `.\.venv\Scripts\python.exe scripts/verify_standalone_html.py`，由隔离 API 导出后直接打开 `file://` 文件，不启动任何 HTTP 服务，验证文字、粗体、增减高度、换行/空行/空文字、中文输入法、纯文本粘贴、换图、两轮下载保存与重开、Ctrl+S 和无工具栏的两页 PDF。长内容打印验证末尾文字仍存在；没有外部网络请求。产物及虚构的 `可编辑简历示例.html` 位于 `artifacts/standalone-html/`。

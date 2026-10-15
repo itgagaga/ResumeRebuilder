@@ -53,8 +53,11 @@ def render_html(project, *, editable=False):
                 )
                 tag = "div" if editable else "span"
                 editor_attributes = ' data-resume-text contenteditable="true" spellcheck="false" role="textbox" aria-label="编辑简历文字" aria-multiline="true"' if editable else ""
+                # Layout zoom retains effective small-size glyph metrics while
+                # keeping the specified CSS font above browser minimum settings.
+                zoom = min(1,style.fontSize*factor/100)
                 height = "auto;min-height:100%" if editable else "100%"
-                content = (f'<{tag}{editor_attributes} style="display:block;width:{100/style.fontScaleX}%;height:{height};transform:scaleX({style.fontScaleX});transform-origin:left top;">'
+                content = (f'<{tag}{editor_attributes} style="display:block;font-size:{style.fontSize*factor/zoom}px;line-height:{style.lineHeight};zoom:{zoom};width:{100/style.fontScaleX}%;height:{height};transform:scaleX({style.fontScaleX});transform-origin:left top;">'
                            + text_html(element) + f'</{tag}>')
             elif element.type == "image_placeholder":
                 properties += "overflow:hidden;"

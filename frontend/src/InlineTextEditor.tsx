@@ -1,13 +1,14 @@
 import { useLayoutEffect, useRef } from 'react'
 import type { Element } from './types'
-import { readEditable, textNodes } from './textEditing'
+import { readEditable, textNodes, textSurfaceStyle, textRenderZoom } from './textEditing'
 
 interface Props {
   element: Element; onChange: (e: Element) => void; onFinish: () => void; undo: () => void; redo: () => void;
   active?: boolean; autoFocus?: boolean; enabled?: boolean; onActivate?: () => void; onNavigate?: (backward: boolean) => boolean
+  unitScale: number
 }
 
-export default function InlineTextEditor({ element, onChange, onFinish, undo, redo, active = true, autoFocus = true, enabled = true, onActivate, onNavigate }: Props) {
+export default function InlineTextEditor({ element, onChange, onFinish, undo, redo, active = true, autoFocus = true, enabled = true, onActivate, onNavigate, unitScale }: Props) {
   const root = useRef<HTMLDivElement>(null), composing = useRef(false), lastEmitted = useRef('')
   const signature = JSON.stringify([element.text,element.textRuns || []])
   const initialized = useRef(false)
@@ -57,7 +58,7 @@ export default function InlineTextEditor({ element, onChange, onFinish, undo, re
     emit()
   }
   return <div ref={root} className={`inline-editor text-content ${enabled ? 'editable-surface' : ''} ${active ? 'is-editing' : ''}`} data-text-id={element.id} contentEditable={enabled} suppressContentEditableWarning role="textbox" aria-label={active ? '直接编辑文字' : `点击编辑：${element.text.slice(0,24) || '空段落'}`} aria-multiline="true" tabIndex={enabled ? 0 : -1}
-    style={{ font: 'inherit', color: 'inherit', lineHeight: 'inherit', textAlign: 'inherit', width: `${100/element.style.fontScaleX}%`, transform: `scaleX(${element.style.fontScaleX})`, transformOrigin: 'left top' }}
+    style={{ font: 'inherit', color: 'inherit', textAlign: 'inherit', ...textSurfaceStyle(element,unitScale), minHeight: Math.max(0,element.height-element.style.borderWidth*2)*unitScale/textRenderZoom(element,unitScale) }}
     onFocus={onActivate} onPointerDown={event => { if (enabled) event.stopPropagation() }} onDoubleClick={event => { if (enabled) event.stopPropagation() }}
     onInput={emit} onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false; emit() }}
     onPaste={event => { event.preventDefault(); insertPlainText(event.clipboardData.getData('text/plain')) }}

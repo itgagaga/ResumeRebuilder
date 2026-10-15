@@ -27,9 +27,10 @@
   }
   function measure(editor, width, nowrap = false) {
     const clone = editor.cloneNode(true), cs = getComputedStyle(editor);
+    const zoom = number(cs.zoom) || 1;
     clone.removeAttribute('data-resume-text'); clone.removeAttribute('contenteditable');
     Object.assign(clone.style,{ position:'fixed', left:'-20000px', top:'0', visibility:'hidden', transform:'none',
-      font:cs.font, lineHeight:cs.lineHeight, textAlign:cs.textAlign, width:nowrap ? 'max-content' : width+'px',
+      font:cs.font, lineHeight:cs.lineHeight, textAlign:cs.textAlign, width:nowrap ? 'max-content' : (width/zoom)+'px',
       height:'auto', minHeight:'0', whiteSpace:nowrap ? 'pre' : 'pre-wrap', overflowWrap:'break-word' });
     if (!clone.textContent || clone.textContent.endsWith('\n')) clone.append(document.createTextNode('\u200b'));
     document.body.append(clone);
@@ -43,7 +44,7 @@
     const scale = Number(element.dataset.scale) || 1, border = number(cs.borderLeftWidth)+number(cs.borderRightWidth);
     if (mode === 'auto') {
       let right = Number(page.dataset.baseWidth)-margin(page);
-      const lineHeight = number(cs.lineHeight) || number(cs.fontSize)*1.15;
+      const lineHeight = number(element.style.fontSize)*(number(element.style.lineHeight) || 1.15);
       for (const other of all) {
         if (other.node !== element && other.node.dataset.kind !== 'line' && other.x > old.x+2 && other.y < old.y+lineHeight && other.y+other.height > old.y+2) right = Math.min(right,other.x-4);
       }
@@ -52,7 +53,7 @@
     }
     const width = Math.max(1,(number(element.style.width)-border)/scale);
     const measured = measure(editor,width).height+border+2;
-    const minimum = (number(cs.lineHeight) || number(cs.fontSize)*1.15)+border+2;
+    const minimum = number(element.style.fontSize)*(number(element.style.lineHeight) || 1.15)+border+2;
     const height = mode === 'paragraph' ? Math.max(minimum,measured) : Math.max(old.height,measured);
     element.style.height = height+'px';
     const delta = number(element.style.height)-old.height;

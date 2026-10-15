@@ -4,7 +4,7 @@ import { assetUrl } from './api'
 import { createElement, type Element, type Page, type Project, type Tool } from './types'
 import TextContent from './TextContent'
 import InlineTextEditor from './InlineTextEditor'
-import { layoutText } from './textEditing'
+import { layoutText, textSurfaceStyle, textUnitScale, textOverflows } from './textEditing'
 
 type Point = { x: number; y: number }
 type Drag = { start: Point; kind: 'move' | 'resize' | 'draw'; element?: Element; handle?: string; original: Project }
@@ -16,17 +16,17 @@ interface Props {
   contentMode: boolean
 }
 
-export function ElementView({ element: e, projectId, editing = false }: { element: Element; projectId: string; editing?: boolean }) {
+export function ElementView({ element: e, projectId, editing = false, unitScale = 1 }: { element: Element; projectId: string; editing?: boolean; unitScale?: number }) {
   if (e.type === 'image_placeholder') {
     return e.assetId ? <img draggable={false} alt="用户上传的图片" src={assetUrl(projectId, e.assetId)} style={{ width: '100%', height: '100%', display: 'block', objectFit: e.fit, objectPosition: `${50+e.crop.offsetX/2}% ${50+e.crop.offsetY/2}%`, transform: `translate(${e.crop.offsetX/2}%,${e.crop.offsetY/2}%) scale(${e.crop.scale})` }} /> : editing ? <div className="photo-empty"><ImagePlus size={Math.min(24, e.height/3)} /><span>上传图片</span></div> : null
   }
-  return e.type === 'text' ? <span className="text-content" data-text-id={e.id} style={{ display: 'block', width: `${100/e.style.fontScaleX}%`, height: '100%', transform: `scaleX(${e.style.fontScaleX})`, transformOrigin: 'left top' }}><TextContent element={e}/></span> : null
+  return e.type === 'text' ? <span className="text-content" data-text-id={e.id} style={{ ...textSurfaceStyle(e,unitScale), height: `${100*unitScale}%` }}><TextContent element={e}/></span> : null
 }
 
 export function elementStyle(e: Element): React.CSSProperties {
   return { position: 'absolute', left: e.x, top: e.y, width: e.width, height: e.height, zIndex: e.zIndex,
     transform: `rotate(${e.rotation}deg)`, transformOrigin: e.type === 'line' ? 'left top' : 'center',
-    fontFamily: e.style.fontFamily, fontSize: e.style.fontSize, fontWeight: e.style.fontWeight, fontStyle: e.style.fontStyle,
+    fontFamily: e.style.fontFamily, fontSize: e.style.fontSize, fontWeight: e.style.fontWeight, fontStyle: e.style.fontStyle, fontSynthesis: 'weight style small-caps',
     color: e.style.color, background: e.style.background, lineHeight: e.style.lineHeight, textAlign: e.style.textAlign,
     border: `${e.style.borderWidth}px solid ${e.style.borderColor}`,
     borderRadius: e.shape === 'circle' ? '50%' : e.shape === 'rounded' ? e.style.borderRadius || 10 : e.style.borderRadius,
@@ -52,7 +52,7 @@ export default function Canvas({ project, page, pageIndex, zoom, tool, selected,
   useEffect(() => {
     const check = () => {
       const ids = Array.from(root.current?.querySelectorAll<HTMLElement>('[data-text-id]') || [])
-        .filter(el => el.scrollHeight > el.clientHeight+2 || el.scrollWidth > el.clientWidth+2).map(el => el.dataset.textId!)
+        .filter(textOverflows).map(el => el.dataset.textId!)
       setOverflowIds(ids); setOverflow(ids)
     }
     const timer = setTimeout(check, 80)
@@ -127,7 +127,7 @@ export default function Canvas({ project, page, pageIndex, zoom, tool, selected,
     <div ref={root} className={`paper tool-${tool} ${contentMode ? 'content-mode' : 'layout-mode'}`} style={{ width: page.width, height: page.height, background: page.background, transform: `scale(${scale})` }} onDoubleClick={() => { if (!contentMode && active?.type === 'text' && tool === 'select') setEditing(active.id) }} onPointerDown={e => start(e)} onPointerMove={move} onPointerUp={end} onPointerCancel={e => { if (drag.current) change(drag.current.original, false); drag.current = null; setDrawing(null); if (root.current?.hasPointerCapture(e.pointerId)) root.current.releasePointerCapture(e.pointerId) }}>
       {page.elements.map(e => <div key={e.id} data-element-id={e.id} title={e.type === 'text' && e.sourceRegion?.confidence != null && e.sourceRegion.confidence < .85 ? '识别置信度低，请对照原页核对' : undefined} className={`element ${selected === e.id ? 'is-selected' : ''} ${overflowIds.includes(e.id) ? 'is-overflow' : ''} ${e.type === 'text' && e.sourceRegion?.confidence != null && e.sourceRegion.confidence < .85 ? 'is-uncertain' : ''}`}
         style={elementStyle(e)} onPointerDown={event => start(event, e)} onDoubleClick={event => { if (e.type === 'text') { event.stopPropagation(); setSelected(e.id); setEditing(e.id) } }}>
-        {e.type === 'text' && (contentMode || editing === e.id) ? <InlineTextEditor element={e} onChange={updateElement} onFinish={() => setEditing(current => current === e.id ? null : current)} onActivate={() => { setSelected(e.id); setEditing(e.id) }} active={editing === e.id} autoFocus={!contentMode} enabled={tool === 'select'} onNavigate={contentMode ? backward => navigateText(e.id,backward) : undefined} undo={undo} redo={redo}/> : <ElementView element={e} projectId={project.projectId} editing />}
+        {e.type === 'text' && (contentMode || editing === e.id) ? <InlineTextEditor element={e} unitScale={textUnitScale(page)} onChange={updateElement} onFinish={() => setEditing(current => current === e.id ? null : current)} onActivate={() => { setSelected(e.id); setEditing(e.id) }} active={editing === e.id} autoFocus={!contentMode} enabled={tool === 'select'} onNavigate={contentMode ? backward => navigateText(e.id,backward) : undefined} undo={undo} redo={redo}/> : <ElementView element={e} projectId={project.projectId} unitScale={textUnitScale(page)} editing />}
       </div>)}
       {active && !editing && !contentMode && <div className="selection-box" style={{ position: 'absolute', left: active.x, top: active.y, width: active.width, height: active.height, transform: `rotate(${active.rotation}deg)`, transformOrigin: active.type === 'line' ? 'left top' : 'center', zIndex: 10001 }}>
         <span className="size-label">{Math.round(active.width)} × {Math.round(active.height)}</span>
